@@ -1009,7 +1009,7 @@
             });
             localStorage.setItem('settingsPanel', panelId);
             if (panelId === 'api' && typeof loadApiKeys === 'function') loadApiKeys();
-            if (panelId === 'incremental' && typeof syncSettingsCbtUi === 'function') syncSettingsCbtUi();
+            if (panelId === 'engine' && typeof syncSettingsCbtUi === 'function') syncSettingsCbtUi();
         }
 
         function initSetupWizardTriggers() {
