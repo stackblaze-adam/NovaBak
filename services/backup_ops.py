@@ -657,6 +657,20 @@ def _worker_health():
     return False, None
 
 
+def _overview_host_label(hosts):
+    """Footer label for registered vSphere endpoints."""
+    if not hosts:
+        return "Registered hosts"
+    types = [getattr(h, "connection_type", None) or "auto" for h in hosts]
+    vcenter = sum(1 for t in types if t == "vcenter")
+    standalone = sum(1 for t in types if t == "standalone")
+    if vcenter and not standalone:
+        return "vCenter" if vcenter == 1 else "vCenters"
+    if standalone and not vcenter:
+        return "ESXi host" if standalone == 1 else "ESXi hosts"
+    return "Registered hosts"
+
+
 def get_overview(db):
     config = get_or_create_config(db)
     vms = db.query(VM).all()
@@ -749,6 +763,7 @@ def get_overview(db):
         "scheduled_count": sum(1 for v in selected if v.is_job_active),
         "running_count": len(live_jobs),
         "host_count": len(esxi_hosts),
+        "host_label": _overview_host_label(esxi_hosts),
         "inventory_count": len(vms),
         "status_counts": status_counts,
         "log_stats_7d": log_stats_7d,

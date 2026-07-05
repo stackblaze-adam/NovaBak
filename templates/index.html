@@ -870,6 +870,7 @@
             });
 
             set('ov-hosts', data.host_count ?? '0');
+            set('ov-hosts-label', data.host_label || 'Registered hosts');
             set('ov-inventory', data.inventory_count ?? '0');
 
             const liveEl = document.getElementById('ov-live-jobs');

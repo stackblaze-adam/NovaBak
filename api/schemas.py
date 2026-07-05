@@ -302,6 +302,7 @@ class OverviewResponse(BaseModel):
     scheduled_count: int
     running_count: int
     host_count: int
+    host_label: str = "Registered hosts"
     inventory_count: int
     status_counts: dict
     log_stats_7d: dict
