@@ -817,8 +817,8 @@
                 setOverviewRing(document.getElementById('ov-disk-ring'), freePct, diskVariant);
 
                 set('ov-backup-ring-value', st.total_human || '—');
-                set('ov-backup-ring-pct', backupPct > 0 ? `${backupPct}% of disk` : '—');
-                set('ov-backup-ring-meta', `${st.version_count ?? 0} version(s) · ${st.vm_count ?? 0} VM(s)`);
+                set('ov-backup-ring-pct', backupPct > 0 ? `${backupPct}% of disk used by backups` : 'No backups yet');
+                set('ov-backup-ring-meta', `${st.version_count ?? 0} saved snapshot(s) · ${st.vm_count ?? 0} VM(s)`);
                 setOverviewRing(document.getElementById('ov-backup-ring'), Math.max(backupPct, backupGb > 0 ? 2 : 0), 'ring-backup');
             } else {
                 ringsSection?.classList.add('hidden');
