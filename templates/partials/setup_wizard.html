@@ -17,6 +17,8 @@
                 </button>
             </div>
 
+            <div id="wizardError" class="wizard-error-banner hidden" role="alert"></div>
+
             <div class="wizard-layout">
 
                 <nav class="wizard-nav" id="wizardStepIndicators" aria-label="Setup steps">
@@ -43,8 +45,6 @@
                 </nav>
 
                 <div class="wizard-content">
-                    <div id="wizardError" class="hidden absolute top-3 left-4 right-4 z-10 px-4 py-3 rounded text-sm font-medium" style="background:rgba(239,68,68,0.12); color:#f87171;"></div>
-
                     <!-- Step 1: Storage -->
                     {% set wizard_st = (config.storage_type or 'NFS')|upper %}
                     <div class="wizard-step" data-wizard-step="1">
