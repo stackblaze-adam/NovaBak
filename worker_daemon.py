@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import hashlib
-from models import SessionLocal, VM, Config, init_db
+from models import SessionLocal, VM, Config, ESXiHost, init_db
 import worker
 from logger_util import log_info, log_error, log_critical
 from config_env import DATA_DIR
@@ -35,6 +35,15 @@ def run_daemon():
     init_db()
     pid = os.getpid()
     log_info(f"[PID {pid}] Starting Backup Engine Daemon...")
+
+    db = SessionLocal()
+    try:
+        if db.query(ESXiHost).count() > 0:
+            from services.vddk_install import ensure_vddk_installed
+            ok, msg = ensure_vddk_installed(db.query(Config).first())
+            log_info(f"[VDDK] Startup check: {msg}" if ok else f"[VDDK] Startup: {msg}")
+    finally:
+        db.close()
     
     # Initial scheduler start + concurrency limits
     worker.start_scheduler()

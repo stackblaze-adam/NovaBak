@@ -88,7 +88,7 @@ class Config(Base):
     backup_transport = Column(String, default="nbd")
     repo_min_free_gb = Column(Integer, default=50)
     exclude_infra_vms = Column(Boolean, default=False)
-    vddk_libdir = Column(String, default="/opt/vmware-vix-disklib-distrib")
+    vddk_libdir = Column(String, default="")
 
     # Storage Settings
     storage_type = Column(String, default="SMB") # SMB, NFS, S3

@@ -16,7 +16,8 @@ data/
 
 # Compiled distribution / release zips
 *.zip
-*.tar.gz
+# VDDK tarballs are proprietary — keep in vendor/vddk/ on the server only
+vendor/vddk/*.tar.gz
 
 # IDE / OS
 .vscode/

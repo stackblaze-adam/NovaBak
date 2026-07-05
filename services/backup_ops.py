@@ -45,7 +45,7 @@ def config_to_dict(config):
         "backup_transport": getattr(config, "backup_transport", "nbd") or "nbd",
         "repo_min_free_gb": getattr(config, "repo_min_free_gb", 50),
         "exclude_infra_vms": getattr(config, "exclude_infra_vms", True),
-        "vddk_libdir": getattr(config, "vddk_libdir", "/opt/vmware-vix-disklib-distrib"),
+        "vddk_libdir": getattr(config, "vddk_libdir", None) or "",
         "smtp_server": config.smtp_server,
         "smtp_port": config.smtp_port,
         "smtp_user": config.smtp_user,
@@ -198,10 +198,20 @@ def add_esxi_host(db, name, host_ip, username, password):
     existing = db.query(ESXiHost).filter(ESXiHost.name == name).first()
     if existing:
         raise ValueError(f"Host '{name}' already exists")
+
+    si = esxi_handler.connect_esxi(host_ip, username, password)
+    if not si:
+        raise ConnectionError(f"Could not connect to ESXi host at {host_ip}")
+    esxi_handler.Disconnect(si)
+
+    from services.vddk_install import ensure_vddk_on_host_add
+    vddk_status = ensure_vddk_on_host_add(db)
+
     host = ESXiHost(name=name, host_ip=host_ip, username=username, password=password)
     db.add(host)
     db.commit()
     db.refresh(host)
+    host._vddk_bootstrap = vddk_status  # ephemeral, for API response
     return host
 
 

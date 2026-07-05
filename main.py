@@ -409,9 +409,12 @@ def add_esxi_host(
     db: Session = Depends(get_db)
 ):
     require_auth(request)
-    new_host = ESXiHost(name=name, host_ip=host_ip, username=username, password=password)
-    db.add(new_host)
-    db.commit()
+    try:
+        backup_ops.add_esxi_host(db, name, host_ip, username, password)
+    except ValueError as e:
+        return RedirectResponse(url=f"/?error={e}", status_code=303)
+    except ConnectionError as e:
+        return RedirectResponse(url=f"/?error={e}", status_code=303)
     return RedirectResponse(url="/", status_code=303)
 
 @app.post("/delete_esxi_host")

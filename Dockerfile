@@ -1,10 +1,23 @@
+# ── Build nbdkit VDDK plugin (not in Debian slim repos) ─────────────────────
+FROM debian:bookworm-slim AS nbdkit-vddk-build
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates git autoconf automake libtool pkg-config make gcc \
+    nbdkit libnbd-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git clone --depth 1 https://gitlab.com/nbdkit/nbdkit.git \
+    && cd nbdkit \
+    && autoreconf -i \
+    && ./configure --disable-dependency-tracking \
+    && make -j"$(nproc)"
+
 FROM python:3.11-slim
 
 # Metadata
 LABEL maintainer="THIS Cyber Security" \
       description="NovaBak — VM Backup Enterprise"
 
-# System dependencies (for pysmb, cryptography, nbdkit NBD transport)
+# Runtime: nbdkit + libnbd + VDDK plugin
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libffi-dev \
@@ -13,6 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnbd0 \
     libnbd-bin \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=nbdkit-vddk-build /src/nbdkit/plugins/vddk/.libs/nbdkit-vddk-plugin.so \
+    /usr/lib/x86_64-linux-gnu/nbdkit/plugins/nbdkit-vddk-plugin.so
 
 WORKDIR /app
 
@@ -23,19 +39,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create required directories
-RUN mkdir -p data bin/ovftool static
+# Vendor dir for VDDK tarball (mounted at runtime on production)
+RUN mkdir -p data bin/ovftool static vendor/vddk
 
-# The data directory will be mounted as a volume
 VOLUME ["/app/data"]
 
-# Expose Web UI port
 EXPOSE 8000
 
-# Default: run web service
-# (Worker daemon runs as a separate container via docker-compose)
-#
-# For NBD/VDDK live backups (backup_transport=nbd), install on the worker image:
-#   nbdkit nbdkit-plugin-vddk libnbd-bin
-#   + VMware VDDK tarball at /opt/vmware-vix-disklib-distrib (not redistributable)
 CMD ["python", "-u", "main.py"]

@@ -257,6 +257,8 @@ def create_host(
         host = backup_ops.add_esxi_host(db, body.name, body.host_ip, body.username, body.password)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ConnectionError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     return ESXiHostResponse(**backup_ops.host_to_dict(host))
 
 

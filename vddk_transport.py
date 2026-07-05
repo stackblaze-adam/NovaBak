@@ -25,27 +25,53 @@ class VddkNotAvailableError(Exception):
 
 
 def get_vddk_libdir(config):
-    libdir = getattr(config, "vddk_libdir", None) if config else None
-    return libdir or os.environ.get("VDDK_LIBDIR", "/opt/vmware-vix-disklib-distrib")
+    from services.vddk_install import get_vddk_libdir as _libdir
+    return _libdir(config)
 
 
 def is_available(config=None):
-    """Return True if nbdkit and the VDDK library directory are present."""
+    """Return True if nbdkit-vddk plugin and VDDK library are present."""
+    if shutil.which("nbdkit") is None:
+        return False
+    if not _nbdkit_vddk_plugin_present():
+        return False
     libdir = get_vddk_libdir(config)
-    vddk_so = os.path.join(libdir, "lib64", "libvixDiskLib.so")
-    if not os.path.isfile(vddk_so):
-        vddk_so = os.path.join(libdir, "lib32", "libvixDiskLib.so")
-    return shutil.which("nbdkit") is not None and os.path.isfile(vddk_so)
+    for sub in ("lib64", "lib32"):
+        if os.path.isfile(os.path.join(libdir, sub, "libvixDiskLib.so")):
+            return True
+    return False
+
+
+def _nbdkit_vddk_plugin_present():
+    import glob as _glob
+    patterns = [
+        "/usr/lib/x86_64-linux-gnu/nbdkit/plugins/nbdkit-vddk-plugin.so",
+        "/usr/lib/*/nbdkit/plugins/nbdkit-vddk-plugin.so",
+        "/usr/local/lib/nbdkit/plugins/nbdkit-vddk-plugin.so",
+    ]
+    for pat in patterns:
+        if _glob.glob(pat):
+            return True
+    return False
 
 
 def availability_message(config=None):
     """Human-readable reason when is_available() is False."""
     if shutil.which("nbdkit") is None:
-        return "nbdkit not found in PATH (install nbdkit + nbdkit-plugin-vddk)"
+        return "nbdkit not found in PATH"
+    if not _nbdkit_vddk_plugin_present():
+        return "nbdkit-vddk-plugin not installed (rebuild worker image)"
     libdir = get_vddk_libdir(config)
-    if not os.path.isdir(libdir):
-        return f"VDDK libdir not found: {libdir}"
-    return f"VDDK library missing under {libdir}"
+    if not is_vddk_lib_installed(libdir):
+        return f"VDDK library missing under {libdir} (add ESXi host to auto-install from vendor/vddk/)"
+    return "unknown"
+
+
+def is_vddk_lib_installed(libdir):
+    for sub in ("lib64", "lib32"):
+        if os.path.isfile(os.path.join(libdir, sub, "libvixDiskLib.so")):
+            return True
+    return False
 
 
 def get_server_thumbprint(host, port=443):
