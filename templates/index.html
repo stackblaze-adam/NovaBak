@@ -274,7 +274,11 @@
         .overview-bar-fill.overview-bar-warn { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
         .overview-bar-fill.overview-bar-danger { background: linear-gradient(90deg, #ef4444, #f87171); }
         .overview-bar-disk { background: linear-gradient(90deg, #10b981, #34d399); }
-        .overview-storage-disk {
+        .overview-storage-path-line {
+            display: flex; align-items: baseline; gap: 0.35rem;
+            min-width: 0; margin-bottom: 0.25rem;
+        }
+        .overview-storage-path-line .font-mono { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
             padding-top: 0.75rem; margin-top: 0.75rem;
             border-top: 1px solid var(--border-color);
         }
@@ -799,12 +803,14 @@
 
             const st = data.storage || {};
             set('ov-storage-type', st.type || '—');
+            const pathLine = document.getElementById('ov-storage-path-line');
             const pathEl = document.getElementById('ov-storage-path');
             if (pathEl) {
                 pathEl.textContent = st.path || '—';
-                pathEl.title = st.path || '';
             }
-            set('ov-storage-meta', `All backups written here on the NovaBak server (${st.type || 'storage'}).`);
+            if (pathLine) {
+                pathLine.title = st.path || '';
+            }
 
             const diskBlock = document.getElementById('ov-storage-disk');
             if (st.disk_total_gb != null && st.disk_free_gb != null) {
