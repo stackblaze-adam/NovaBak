@@ -403,7 +403,9 @@ def perform_backup(vm_id: int):
         vm.progress = 0
         db.commit()
 
-        ok, msg = backup_engine.preflight_check(si, vm.vm_name, timeout_mins=timeout_m, config=config)
+        ok, msg = backup_engine.preflight_check(
+            si, vm.vm_name, timeout_mins=timeout_m, config=config, storage=storage,
+        )
         if not ok:
             if msg.startswith("[SKIP]"):
                 raise BackupSkipped(msg[6:].strip())
@@ -451,7 +453,11 @@ def perform_backup(vm_id: int):
             progress_callback=progress_cb,
             speed_callback=speed_cb,
             is_cancelled_func=cancel_check,
-            max_retries=3
+            max_retries=3,
+            config=config,
+            host_ip=host.host_ip,
+            host_user=host.username,
+            host_password=host.password,
         )
 
         if not success and "cancelled" in (result_msg or "").lower():

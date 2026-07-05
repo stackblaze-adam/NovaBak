@@ -42,6 +42,10 @@ def config_to_dict(config):
         "datastore_min_free_pct": config.datastore_min_free_pct,
         "datastore_headroom_gb": config.datastore_headroom_gb,
         "datastore_est_multiplier": config.datastore_est_multiplier,
+        "backup_transport": getattr(config, "backup_transport", "legacy") or "legacy",
+        "repo_min_free_gb": getattr(config, "repo_min_free_gb", 50),
+        "exclude_infra_vms": getattr(config, "exclude_infra_vms", True),
+        "vddk_libdir": getattr(config, "vddk_libdir", "/opt/vmware-vix-disklib-distrib"),
         "smtp_server": config.smtp_server,
         "smtp_port": config.smtp_port,
         "smtp_user": config.smtp_user,
@@ -93,6 +97,16 @@ def update_storage_config(db, data):
         config.datastore_headroom_gb = data["datastore_headroom_gb"]
     if "datastore_est_multiplier" in data and data["datastore_est_multiplier"] is not None:
         config.datastore_est_multiplier = data["datastore_est_multiplier"]
+    if "backup_transport" in data and data["backup_transport"] is not None:
+        t = str(data["backup_transport"]).lower()
+        if t in ("legacy", "nbd"):
+            config.backup_transport = t
+    if "repo_min_free_gb" in data and data["repo_min_free_gb"] is not None:
+        config.repo_min_free_gb = max(1, min(10000, int(data["repo_min_free_gb"])))
+    if "exclude_infra_vms" in data and data["exclude_infra_vms"] is not None:
+        config.exclude_infra_vms = bool(data["exclude_infra_vms"])
+    if "vddk_libdir" in data and data["vddk_libdir"] is not None:
+        config.vddk_libdir = data["vddk_libdir"]
     db.commit()
     db.refresh(config)
     return config

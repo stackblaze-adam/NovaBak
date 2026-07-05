@@ -84,6 +84,11 @@ class Config(Base):
     datastore_headroom_gb = Column(Integer, default=10)
     datastore_est_multiplier = Column(Float, default=2.0)
     scheduler_paused = Column(Boolean, default=False)
+    # Backup transport: legacy (CopyVirtualDisk temp) | nbd (VDDK/NBD stream)
+    backup_transport = Column(String, default="legacy")
+    repo_min_free_gb = Column(Integer, default=50)
+    exclude_infra_vms = Column(Boolean, default=True)
+    vddk_libdir = Column(String, default="/opt/vmware-vix-disklib-distrib")
 
     # Storage Settings
     storage_type = Column(String, default="SMB") # SMB, NFS, S3
@@ -202,6 +207,10 @@ def init_db():
             ("datastore_headroom_gb", "ALTER TABLE config ADD COLUMN datastore_headroom_gb INTEGER DEFAULT 10"),
             ("datastore_est_multiplier", "ALTER TABLE config ADD COLUMN datastore_est_multiplier REAL DEFAULT 2.0"),
             ("scheduler_paused", "ALTER TABLE config ADD COLUMN scheduler_paused BOOLEAN DEFAULT 0"),
+            ("backup_transport", "ALTER TABLE config ADD COLUMN backup_transport VARCHAR DEFAULT 'legacy'"),
+            ("repo_min_free_gb", "ALTER TABLE config ADD COLUMN repo_min_free_gb INTEGER DEFAULT 50"),
+            ("exclude_infra_vms", "ALTER TABLE config ADD COLUMN exclude_infra_vms BOOLEAN DEFAULT 1"),
+            ("vddk_libdir", "ALTER TABLE config ADD COLUMN vddk_libdir VARCHAR DEFAULT '/opt/vmware-vix-disklib-distrib'"),
         ]
         
         from logger_util import log_info, log_warn

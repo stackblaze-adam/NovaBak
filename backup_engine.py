@@ -10,6 +10,7 @@ import re
 import ssl
 import time
 import datetime
+import shutil
 import requests
 from pyVmomi import vim
 from urllib.parse import quote as url_quote
@@ -20,6 +21,14 @@ requests.packages.urllib3.disable_warnings(
     requests.packages.urllib3.exceptions.InsecureRequestWarning)
 
 CHUNK_SIZE = 1024 * 1024  # 1MB chunks for download
+
+# Infrastructure VMs skipped when config.exclude_infra_vms is True
+INFRA_VM_PATTERNS = [
+    re.compile(r"(?i)vcenter"),
+    re.compile(r"(?i)\bvcls\b"),
+    re.compile(r"(?i)vsphere cluster service"),
+    re.compile(r"(?i)photon platform"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +393,61 @@ def _get_datastore_summary(si, ds_name):
     return None
 
 
+def _is_infra_vm(vm_name, config):
+    """Return True if VM matches built-in infrastructure patterns and exclusion is enabled."""
+    if config is None or not getattr(config, "exclude_infra_vms", True):
+        return False
+    return any(p.search(vm_name or "") for p in INFRA_VM_PATTERNS)
+
+
+def _effective_datastore_multiplier(config, power_state):
+    """Live legacy path uses temp copy (2×); NBD path uses snapshot only (1×)."""
+    multiplier = getattr(config, "datastore_est_multiplier", None) if config else None
+    if multiplier is None:
+        multiplier = 2.0
+    if power_state == "poweredOff":
+        return 1.0
+    transport = getattr(config, "backup_transport", "legacy") if config else "legacy"
+    if transport == "nbd":
+        return 1.0
+    return float(multiplier)
+
+
+def _check_repo_capacity_for_vm(storage, si, vm_name, config):
+    """Repo guard with VM-size estimate when ESXi connection is available."""
+    if storage is None:
+        return True, "No storage provider"
+
+    min_gb = getattr(config, "repo_min_free_gb", None) if config else None
+    if min_gb is None:
+        min_gb = 50
+
+    base = storage.get_base_path()
+    if base.startswith("s3://"):
+        return True, "S3 repo space check skipped"
+
+    path = getattr(storage, "base_path", None) or base
+    if not path or not os.path.exists(path):
+        return False, f"[SKIP] Backup repository path not accessible: {path}"
+
+    try:
+        stat = shutil.disk_usage(path)
+    except OSError as e:
+        return False, f"[SKIP] Cannot read backup repository disk usage: {e}"
+
+    free_gb = stat.free / (1024 ** 3)
+    vm = _get_vm(si, vm_name) if si else None
+    disk_gb = _vm_disk_gb(vm) if vm else 0
+    need_gb = max(float(min_gb), disk_gb * 1.1) if disk_gb else float(min_gb)
+
+    if free_gb < need_gb:
+        return False, (
+            f"[SKIP] Backup repository has {free_gb:.0f} GB free "
+            f"({path}) — need ~{need_gb:.0f} GB for {vm_name}"
+        )
+    return True, "Repository capacity OK"
+
+
 def _vm_disk_gb(vm):
     if getattr(vm, "storage_gb", None) and vm.storage_gb > 0:
         return float(vm.storage_gb)
@@ -410,13 +474,9 @@ def _check_datastore_capacity(si, vm_name, config):
     headroom = getattr(config, "datastore_headroom_gb", None)
     if headroom is None:
         headroom = 10
-    multiplier = getattr(config, "datastore_est_multiplier", None)
-    if multiplier is None:
-        multiplier = 2.0
 
     power_state = getattr(vm.runtime, "powerState", "poweredOn")
-    if power_state == "poweredOff":
-        multiplier = 1.0
+    multiplier = _effective_datastore_multiplier(config, power_state)
 
     disk_gb = _vm_disk_gb(vm)
     need_gb = disk_gb * float(multiplier) + float(headroom)
@@ -440,7 +500,9 @@ def _check_datastore_capacity(si, vm_name, config):
     for ds_name in sorted(ds_names):
         summary = _get_datastore_summary(si, ds_name)
         if not summary:
-            log_warn(f"[PREFLIGHT] Datastore '{ds_name}' not found for capacity check")
+            errors.append(
+                f"Datastore '{ds_name}' not found — cannot verify free space (fail closed)"
+            )
             continue
         if summary["free_pct"] < min_pct:
             errors.append(
@@ -457,14 +519,45 @@ def _check_datastore_capacity(si, vm_name, config):
         return False, "[SKIP] " + "; ".join(errors)
     return True, "Datastore capacity OK"
 
+
+def _collect_vm_disk_layout(vm):
+    """Return disk descriptors, vmx paths, and power state for a VM."""
+    power_state = getattr(vm.runtime, "powerState", "poweredOn")
+    is_off = power_state == "poweredOff"
+
+    disk_descriptors = []
+    if hasattr(vm, "layoutEx") and vm.layoutEx and vm.layoutEx.file:
+        for f in vm.layoutEx.file:
+            if f.type == "diskDescriptor":
+                ds_name, rel_path = _parse_datastore_path(f.name)
+                if ds_name:
+                    disk_descriptors.append({
+                        "ds_name": ds_name,
+                        "ds_path": f.name,
+                        "rel_path": rel_path,
+                    })
+
+    vmx_ds_name = None
+    vmx_rel_path = None
+    if vm.config and vm.config.files and vm.config.files.vmPathName:
+        vmx_ds_name, vmx_rel_path = _parse_datastore_path(vm.config.files.vmPathName)
+
+    return is_off, disk_descriptors, vmx_ds_name, vmx_rel_path
+
 # ===========================================================================
 #  MAIN: Preflight Check
 # ===========================================================================
-def preflight_check(si, vm_name, timeout_mins=15, config=None, **kwargs):
+def preflight_check(si, vm_name, timeout_mins=15, config=None, storage=None, **kwargs):
     """
     Runs a comprehensive pre-backup checklist.
     Returns (success: bool, message: str)
     """
+    if _is_infra_vm(vm_name, config):
+        return False, (
+            "[SKIP] Infrastructure VM excluded from backup "
+            f"({vm_name}). Disable exclude_infra_vms in settings to override."
+        )
+
     # Attempt cleanup on the VM's datastore(s)
     vm = _get_vm(si, vm_name)
     if vm and vm.config and vm.config.files:
@@ -479,6 +572,8 @@ def preflight_check(si, vm_name, timeout_mins=15, config=None, **kwargs):
     ]
     if config is not None:
         steps.insert(0, ("Check datastore free space", lambda: _check_datastore_capacity(si, vm_name, config)))
+    if storage is not None:
+        steps.insert(0, ("Check repository free space", lambda: _check_repo_capacity_for_vm(storage, si, vm_name, config)))
 
     for name, func in steps:
         log_info(f"[PREFLIGHT] Step: {name}...")
@@ -726,17 +821,17 @@ def import_vm_native(si, storage, source_rel_dir, target_ds, target_name, progre
 # ===========================================================================
 #  MAIN: Export VM - Power-State Aware Backup
 # ===========================================================================
-def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None, speed_callback=None, max_retries=3, is_cancelled_func=None, **kwargs):
+def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None, speed_callback=None,
+                     max_retries=3, is_cancelled_func=None, config=None, host_ip=None, host_user=None,
+                     host_password=None, **kwargs):
     """
     Power-state-aware backup:
 
-    POWERED OFF → Direct pipe (no snapshot, no CopyVirtualDisk):
-      Snapshot → stream descriptor → stream flat VMDK → stream VMX → done
-      ~2x faster, no temp storage used.
+    POWERED OFF → Direct HTTP stream (no snapshot, no CopyVirtualDisk).
 
-    POWERED ON / SUSPENDED → Safe path (snapshot + CopyVirtualDisk):
-      Snapshot → CopyVirtualDisk (unlocks) → stream copies → stream VMX → cleanup
-      Required because ESXi kernel-locks flat VMDKs on running VMs.
+    POWERED ON / SUSPENDED → config.backup_transport:
+      legacy — Snapshot + CopyVirtualDisk temp on ESXi + HTTP stream (default)
+      nbd    — Snapshot + VDDK/NBD stream (no temp on ESXi; requires VDDK + nbdkit)
     """
     vm = _get_vm(si, vm_name)
     if not vm:
@@ -745,6 +840,8 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
     last_error = ""
     snap_name = None
     temp_ds_dir = None
+    host_ip = host_ip or _get_host_ip(si)
+    transport = getattr(config, "backup_transport", "legacy") if config else "legacy"
 
     for attempt in range(1, max_retries + 1):
         log_info(f"[BACKUP] Attempt {attempt}/{max_retries} for {vm_name}")
@@ -752,88 +849,102 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
             return False, "Backup cancelled by user"
 
         try:
-            # --- Step 1: Collect disk info + detect power state ---
             vm = _get_vm(si, vm_name)
             content = si.RetrieveContent()
             datacenter = content.rootFolder.childEntity[0]
 
-            power_state = getattr(vm.runtime, 'powerState', 'poweredOn')
-            is_off = (power_state == 'poweredOff')
-            log_info(f"[BACKUP] VM power state: {power_state} -> using {'DIRECT' if is_off else 'SNAPSHOT+COPY'} method")
-
-            disk_descriptors = []
-            if hasattr(vm, 'layoutEx') and vm.layoutEx and vm.layoutEx.file:
-                for f in vm.layoutEx.file:
-                    if f.type == 'diskDescriptor':
-                        ds_name, rel_path = _parse_datastore_path(f.name)
-                        if ds_name:
-                            disk_descriptors.append({
-                                'ds_name': ds_name,
-                                'ds_path': f.name,
-                                'rel_path': rel_path,
-                            })
+            is_off, disk_descriptors, vmx_ds_name, vmx_rel_path = _collect_vm_disk_layout(vm)
+            power_state = getattr(vm.runtime, "powerState", "poweredOn")
+            live_method = "nbd" if transport == "nbd" else "snapshot+copy"
+            log_info(
+                f"[BACKUP] VM power state: {power_state} -> "
+                f"using {'DIRECT' if is_off else live_method.upper()} method"
+            )
 
             if not disk_descriptors:
                 raise Exception(f"No disk files found in layoutEx for {vm_name}")
-
-            vmx_ds_name = None
-            vmx_rel_path = None
-            if vm.config and vm.config.files and vm.config.files.vmPathName:
-                vmx_ds_name, vmx_rel_path = _parse_datastore_path(vm.config.files.vmPathName)
 
             log_info(f"[BACKUP] Found {len(disk_descriptors)} disk(s) for {vm_name}:")
             for d in disk_descriptors:
                 log_info(f"  - {d['ds_path']}")
 
-            # ==============================================================
-            #  PATH A: POWERED OFF — Direct stream, no snapshot, no copy
-            # ==============================================================
+            files_downloaded = []
+            method = "direct"
+
             if is_off:
-                if progress_callback: progress_callback(5)
+                if progress_callback:
+                    progress_callback(5)
                 storage.makedirs(dest_rel_dir)
-                files_downloaded = []
                 total_disks = len(disk_descriptors)
 
                 for idx, disk in enumerate(disk_descriptors):
-                    disk_basename = os.path.basename(disk['rel_path'])
-                    flat_basename = disk_basename.replace('.vmdk', '-flat.vmdk')
-                    flat_rel_path = disk['rel_path'].replace('.vmdk', '-flat.vmdk')
+                    disk_basename = os.path.basename(disk["rel_path"])
+                    flat_basename = disk_basename.replace(".vmdk", "-flat.vmdk")
+                    flat_rel_path = disk["rel_path"].replace(".vmdk", "-flat.vmdk")
 
-                    desc_base = 5  + (85 * (idx * 2)     // (total_disks * 2))
-                    flat_base = 5  + (85 * (idx * 2 + 1) // (total_disks * 2))
-                    flat_end  = 5  + (85 * (idx * 2 + 2) // (total_disks * 2))
+                    desc_base = 5 + (85 * (idx * 2) // (total_disks * 2))
+                    flat_base = 5 + (85 * (idx * 2 + 1) // (total_disks * 2))
+                    flat_end = 5 + (85 * (idx * 2 + 2) // (total_disks * 2))
 
                     log_info(f"[BACKUP] [DIRECT] Streaming descriptor ({idx+1}/{total_disks}): {disk_basename}")
                     _download_file_http(
-                        si, disk['ds_name'], disk['rel_path'], storage, f"{dest_rel_dir}/{disk_basename}",
+                        si, disk["ds_name"], disk["rel_path"], storage, f"{dest_rel_dir}/{disk_basename}",
                         progress_callback=progress_callback, progress_base=desc_base, progress_total=2,
-                        speed_callback=speed_callback, is_cancelled_func=is_cancelled_func
+                        speed_callback=speed_callback, is_cancelled_func=is_cancelled_func,
                     )
                     files_downloaded.append(disk_basename)
 
                     log_info(f"[BACKUP] [DIRECT] Streaming flat disk ({idx+1}/{total_disks}): {flat_basename}")
                     _download_file_http(
-                        si, disk['ds_name'], flat_rel_path, storage, f"{dest_rel_dir}/{flat_basename}",
+                        si, disk["ds_name"], flat_rel_path, storage, f"{dest_rel_dir}/{flat_basename}",
                         progress_callback=progress_callback, progress_base=flat_base,
                         progress_total=flat_end - flat_base, speed_callback=speed_callback,
-                        is_cancelled_func=is_cancelled_func
+                        is_cancelled_func=is_cancelled_func,
                     )
                     files_downloaded.append(flat_basename)
 
-            # ==============================================================
-            #  PATH B: POWERED ON — Snapshot + CopyVirtualDisk (safe)
-            # ==============================================================
+            elif transport == "nbd":
+                import vddk_transport
+                if not host_user or not host_password:
+                    raise Exception("NBD transport requires ESXi host credentials")
+                if not host_ip:
+                    raise Exception("Cannot determine ESXi host IP for NBD transport")
+
+                ok, result_msg = vddk_transport.export_live_nbd(
+                    si=si,
+                    vm_name=vm_name,
+                    storage=storage,
+                    dest_rel_dir=dest_rel_dir,
+                    disk_descriptors=disk_descriptors,
+                    vmx_ds_name=vmx_ds_name,
+                    vmx_rel_path=vmx_rel_path,
+                    host_ip=host_ip,
+                    host_user=host_user,
+                    host_password=host_password,
+                    config=config,
+                    progress_callback=progress_callback,
+                    speed_callback=speed_callback,
+                    is_cancelled_func=is_cancelled_func,
+                    create_snapshot_func=_create_backup_snapshot,
+                    remove_snapshot_func=_remove_backup_snapshot,
+                    download_vmx_func=_download_file_http,
+                )
+                if not ok:
+                    raise Exception(result_msg)
+                return True, result_msg
+
             else:
-                # Step B1: Snapshot
-                if progress_callback: progress_callback(2)
+                method = "snapshot+copy"
+                if progress_callback:
+                    progress_callback(2)
                 snap_obj, snap_name = _create_backup_snapshot(si, vm_name)
                 if not snap_obj:
                     raise Exception(f"Snapshot creation failed: {snap_name}")
-                if progress_callback: progress_callback(5)
+                if progress_callback:
+                    progress_callback(5)
 
-                # Step B2: CopyVirtualDisk to temp dir
                 temp_folder = f"_backup_temp_{vm_name}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-                first_ds = disk_descriptors[0]['ds_name']
+                first_ds = disk_descriptors[0]["ds_name"]
                 temp_ds_dir = f"[{first_ds}] {temp_folder}"
                 fm = content.fileManager
                 fm.MakeDirectory(name=temp_ds_dir, datacenter=datacenter, createParentDirectories=True)
@@ -844,20 +955,21 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
                 copied_disks = []
 
                 for idx, disk in enumerate(disk_descriptors):
-                    disk_basename = os.path.basename(disk['rel_path'])
+                    disk_basename = os.path.basename(disk["rel_path"])
                     dst_path = f"[{first_ds}] {temp_folder}/{disk_basename}"
                     copy_start = 5 + (40 * idx // total_disks)
-                    copy_end   = 5 + (40 * (idx + 1) // total_disks)
-                    if progress_callback: progress_callback(copy_start)
+                    copy_end = 5 + (40 * (idx + 1) // total_disks)
+                    if progress_callback:
+                        progress_callback(copy_start)
 
                     log_info(f"[BACKUP] Copying disk {idx+1}/{total_disks}: {disk_basename}...")
                     spec = vim.VirtualDiskManager.VirtualDiskSpec()
-                    spec.diskType = 'thin'
-                    spec.adapterType = 'lsiLogic'
+                    spec.diskType = "thin"
+                    spec.adapterType = "lsiLogic"
                     task = vdm.CopyVirtualDisk_Task(
-                        sourceName=disk['ds_path'], sourceDatacenter=datacenter,
+                        sourceName=disk["ds_path"], sourceDatacenter=datacenter,
                         destName=dst_path, destDatacenter=datacenter,
-                        destSpec=spec, force=True
+                        destSpec=spec, force=True,
                     )
                     t0 = time.time()
                     while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
@@ -874,35 +986,34 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
                     log_info(f"[BACKUP] Disk copy done: {disk_basename}")
                     copied_disks.append((first_ds, f"{temp_folder}/{disk_basename}"))
 
-                # Step B3: Stream unlocked copies to storage
-                if progress_callback: progress_callback(50)
+                if progress_callback:
+                    progress_callback(50)
                 storage.makedirs(dest_rel_dir)
-                files_downloaded = []
 
                 for idx, (ds_name, temp_rel_path) in enumerate(copied_disks):
                     disk_basename = os.path.basename(temp_rel_path)
-                    flat_basename = disk_basename.replace('.vmdk', '-flat.vmdk')
-                    flat_rel_path = temp_rel_path.replace('.vmdk', '-flat.vmdk')
+                    flat_basename = disk_basename.replace(".vmdk", "-flat.vmdk")
+                    flat_rel_path = temp_rel_path.replace(".vmdk", "-flat.vmdk")
                     dl_start = 50 + (38 * idx // len(copied_disks))
-                    dl_mid   = dl_start + 2
-                    dl_end   = 50 + (38 * (idx + 1) // len(copied_disks))
+                    dl_mid = dl_start + 2
+                    dl_end = 50 + (38 * (idx + 1) // len(copied_disks))
 
                     _download_file_http(
                         si, ds_name, temp_rel_path, storage, f"{dest_rel_dir}/{disk_basename}",
                         progress_callback=progress_callback, progress_base=dl_start, progress_total=2,
-                        speed_callback=speed_callback, is_cancelled_func=is_cancelled_func
+                        speed_callback=speed_callback, is_cancelled_func=is_cancelled_func,
                     )
                     files_downloaded.append(disk_basename)
                     _download_file_http(
                         si, ds_name, flat_rel_path, storage, f"{dest_rel_dir}/{flat_basename}",
                         progress_callback=progress_callback, progress_base=dl_mid,
                         progress_total=dl_end - dl_mid, speed_callback=speed_callback,
-                        is_cancelled_func=is_cancelled_func
+                        is_cancelled_func=is_cancelled_func,
                     )
                     files_downloaded.append(flat_basename)
 
-                # Step B4: Cleanup temp dir
-                if progress_callback: progress_callback(90)
+                if progress_callback:
+                    progress_callback(90)
                 try:
                     fm.DeleteDatastoreFile_Task(name=temp_ds_dir, datacenter=datacenter)
                     temp_ds_dir = None
@@ -910,26 +1021,26 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
                 except Exception as e:
                     log_warn(f"[BACKUP] Temp cleanup warning: {e}")
 
-                # Step B5: Remove snapshot
-                if progress_callback: progress_callback(93)
+                if progress_callback:
+                    progress_callback(93)
                 _remove_backup_snapshot(si, vm_name, snap_name, timeout_mins=60)
                 snap_name = None
 
-            # ==============================================================
-            #  SHARED: VMX config download (both paths)
-            # ==============================================================
-            if progress_callback: progress_callback(96)
+            if progress_callback:
+                progress_callback(96)
             if vmx_ds_name and vmx_rel_path:
                 vmx_filename = os.path.basename(vmx_rel_path)
                 try:
-                    _download_file_http(si, vmx_ds_name, vmx_rel_path, storage, f"{dest_rel_dir}/{vmx_filename}")
+                    _download_file_http(
+                        si, vmx_ds_name, vmx_rel_path, storage, f"{dest_rel_dir}/{vmx_filename}",
+                    )
                     files_downloaded.append(vmx_filename)
                     log_info(f"[BACKUP] VMX saved: {vmx_filename}")
                 except Exception as e:
                     log_warn(f"[BACKUP] VMX warning: {e}")
 
-            if progress_callback: progress_callback(100)
-            method = "direct" if is_off else "snapshot+copy"
+            if progress_callback:
+                progress_callback(100)
             return True, f"Backup completed [{method}]: {len(files_downloaded)} file(s) saved to storage"
 
 

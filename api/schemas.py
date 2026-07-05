@@ -57,6 +57,10 @@ class StorageConfigUpdate(BaseModel):
     datastore_min_free_pct: Optional[int] = None
     datastore_headroom_gb: Optional[int] = None
     datastore_est_multiplier: Optional[float] = None
+    backup_transport: Optional[str] = None
+    repo_min_free_gb: Optional[int] = None
+    exclude_infra_vms: Optional[bool] = None
+    vddk_libdir: Optional[str] = None
 
 
 class ConfigResponse(BaseModel):
@@ -75,6 +79,10 @@ class ConfigResponse(BaseModel):
     datastore_min_free_pct: int
     datastore_headroom_gb: int
     datastore_est_multiplier: float
+    backup_transport: str
+    repo_min_free_gb: int
+    exclude_infra_vms: bool
+    vddk_libdir: str
     smtp_server: str
     smtp_port: int
     smtp_user: str
@@ -106,6 +114,10 @@ class ConfigUpdate(BaseModel):
     datastore_min_free_pct: Optional[int] = None
     datastore_headroom_gb: Optional[int] = None
     datastore_est_multiplier: Optional[float] = None
+    backup_transport: Optional[str] = None
+    repo_min_free_gb: Optional[int] = None
+    exclude_infra_vms: Optional[bool] = None
+    vddk_libdir: Optional[str] = None
     smtp_server: Optional[str] = None
     smtp_port: Optional[int] = None
     smtp_user: Optional[str] = None

@@ -31,4 +31,8 @@ EXPOSE 8000
 
 # Default: run web service
 # (Worker daemon runs as a separate container via docker-compose)
+#
+# For NBD/VDDK live backups (backup_transport=nbd), install on the worker image:
+#   nbdkit nbdkit-plugin-vddk libnbd-bin
+#   + VMware VDDK tarball at /opt/vmware-vix-disklib-distrib (not redistributable)
 CMD ["python", "-u", "main.py"]
