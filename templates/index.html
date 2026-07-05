@@ -841,17 +841,6 @@
 
                 set('ov-disk-center-main', `${st.disk_free_gb} GB`);
                 set('ov-disk-center-sub', `${freePct}% free`);
-                const legendEl = document.getElementById('ov-disk-legend-line');
-                if (legendEl) {
-                    const sep = '<span class="overview-legend-sep">·</span>';
-                    legendEl.innerHTML = [
-                        `<span class="overview-legend-item"><span class="overview-legend-swatch ring-free"></span>Free <strong>${st.disk_free_gb} GB</strong></span>`,
-                        `<span class="overview-legend-item"><span class="overview-legend-swatch ring-used"></span>Used <strong>${st.disk_used_gb} GB</strong></span>`,
-                        `<span class="overview-legend-item"><span class="overview-legend-swatch ring-backup"></span>Backups <strong>${st.total_human || '0 GB'}</strong></span>`,
-                        `<span class="overview-legend-item"><strong>${st.disk_total_gb} GB</strong> disk</span>`,
-                        `<span class="overview-legend-item">${st.vm_count ?? 0} VM(s)</span>`,
-                    ].join(sep);
-                }
             } else {
                 diskBlock?.classList.add('hidden');
             }
