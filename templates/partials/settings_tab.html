@@ -234,12 +234,13 @@
                                             <span class="input-label">Live backup transport</span>
                                             <span class="field-tip" tabindex="0" aria-label="Help: Live backup transport">
                                                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                                                <span class="field-tip-text">Legacy copies disks to ESXi temp storage. NBD streams via VDDK (no temp copy; requires VDDK + nbdkit on worker).</span>
+                                                <span class="field-tip-text">NBD uses VDDK when installed, otherwise NFC ExportSnapshot. Legacy copies to ESXi temp storage.</span>
                                             </span>
                                         </div>
                                         <select name="backup_transport" class="w-full py-2 px-3 text-sm">
-                                            <option value="legacy" {% if not config or config.backup_transport != 'nbd' %}selected{% endif %}>Legacy (CopyVirtualDisk)</option>
-                                            <option value="nbd" {% if config and config.backup_transport == 'nbd' %}selected{% endif %}>NBD / VDDK (recommended when installed)</option>
+                                            <option value="nbd" {% if not config or config.backup_transport == 'nbd' or not config.backup_transport %}selected{% endif %}>NBD / NFC stream (recommended)</option>
+                                            <option value="nfc" {% if config and config.backup_transport == 'nfc' %}selected{% endif %}>NFC stream only</option>
+                                            <option value="legacy" {% if config and config.backup_transport == 'legacy' %}selected{% endif %}>Legacy (CopyVirtualDisk temp)</option>
                                         </select>
                                     </div>
                                     <div>

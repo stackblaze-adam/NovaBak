@@ -42,7 +42,7 @@ def config_to_dict(config):
         "datastore_min_free_pct": config.datastore_min_free_pct,
         "datastore_headroom_gb": config.datastore_headroom_gb,
         "datastore_est_multiplier": config.datastore_est_multiplier,
-        "backup_transport": getattr(config, "backup_transport", "legacy") or "legacy",
+        "backup_transport": getattr(config, "backup_transport", "nbd") or "nbd",
         "repo_min_free_gb": getattr(config, "repo_min_free_gb", 50),
         "exclude_infra_vms": getattr(config, "exclude_infra_vms", True),
         "vddk_libdir": getattr(config, "vddk_libdir", "/opt/vmware-vix-disklib-distrib"),
@@ -99,7 +99,7 @@ def update_storage_config(db, data):
         config.datastore_est_multiplier = data["datastore_est_multiplier"]
     if "backup_transport" in data and data["backup_transport"] is not None:
         t = str(data["backup_transport"]).lower()
-        if t in ("legacy", "nbd"):
+        if t in ("legacy", "nbd", "nfc"):
             config.backup_transport = t
     if "repo_min_free_gb" in data and data["repo_min_free_gb"] is not None:
         config.repo_min_free_gb = max(1, min(10000, int(data["repo_min_free_gb"])))

@@ -84,10 +84,10 @@ class Config(Base):
     datastore_headroom_gb = Column(Integer, default=10)
     datastore_est_multiplier = Column(Float, default=2.0)
     scheduler_paused = Column(Boolean, default=False)
-    # Backup transport: legacy (CopyVirtualDisk temp) | nbd (VDDK/NBD stream)
-    backup_transport = Column(String, default="legacy")
+    # Backup transport: legacy (CopyVirtualDisk temp) | nbd (VDDK/NFC stream)
+    backup_transport = Column(String, default="nbd")
     repo_min_free_gb = Column(Integer, default=50)
-    exclude_infra_vms = Column(Boolean, default=True)
+    exclude_infra_vms = Column(Boolean, default=False)
     vddk_libdir = Column(String, default="/opt/vmware-vix-disklib-distrib")
 
     # Storage Settings

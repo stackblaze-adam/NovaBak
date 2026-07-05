@@ -326,7 +326,7 @@ def save_config(
     datastore_min_free_pct: int = Form(15),
     datastore_headroom_gb: int = Form(10),
     datastore_est_multiplier: float = Form(2.0),
-    backup_transport: str = Form("legacy"),
+    backup_transport: str = Form("nbd"),
     repo_min_free_gb: int = Form(50),
     exclude_infra_vms: bool = Form(True),
     vddk_libdir: str = Form("/opt/vmware-vix-disklib-distrib"),
@@ -373,8 +373,8 @@ def save_config(
     config.datastore_min_free_pct = max(5, min(50, datastore_min_free_pct))
     config.datastore_headroom_gb = max(0, min(500, datastore_headroom_gb))
     config.datastore_est_multiplier = max(1.0, min(3.0, float(datastore_est_multiplier)))
-    transport = (backup_transport or "legacy").lower()
-    config.backup_transport = transport if transport in ("legacy", "nbd") else "legacy"
+    transport = (backup_transport or "nbd").lower()
+    config.backup_transport = transport if transport in ("legacy", "nbd", "nfc") else "nbd"
     config.repo_min_free_gb = max(1, min(10000, repo_min_free_gb))
     config.exclude_infra_vms = exclude_infra_vms
     config.vddk_libdir = vddk_libdir.strip() or "/opt/vmware-vix-disklib-distrib"

@@ -407,7 +407,7 @@ def _effective_datastore_multiplier(config, power_state):
         multiplier = 2.0
     if power_state == "poweredOff":
         return 1.0
-    transport = getattr(config, "backup_transport", "legacy") if config else "legacy"
+    transport = getattr(config, "backup_transport", "nbd") if config else "nbd"
     if transport == "nbd":
         return 1.0
     return float(multiplier)
@@ -446,6 +446,260 @@ def _check_repo_capacity_for_vm(storage, si, vm_name, config):
             f"({path}) — need ~{need_gb:.0f} GB for {vm_name}"
         )
     return True, "Repository capacity OK"
+
+
+def _list_all_datastores(si):
+    """Return list of {name, free_gb, capacity_gb, type} for all host datastores."""
+    from pyVmomi import vim
+    content = si.RetrieveContent()
+    container = content.viewManager.CreateContainerView(content.rootFolder, [vim.Datastore], True)
+    out = []
+    try:
+        for ds in container.view:
+            cap = ds.summary.capacity or 0
+            free = ds.summary.freeSpace or 0
+            out.append({
+                "name": ds.summary.name,
+                "free_gb": free / (1024 ** 3),
+                "capacity_gb": cap / (1024 ** 3),
+                "type": getattr(ds.summary, "type", ""),
+            })
+    finally:
+        container.Destroy()
+    return out
+
+
+def _pick_staging_datastore(si, source_ds_names, need_gb):
+    """
+    Pick a staging datastore with enough free space, preferring one NOT on the source set.
+    Returns (ds_name, used_same_as_source: bool).
+    """
+    source = set(source_ds_names or [])
+    candidates = []
+    for ds in _list_all_datastores(si):
+        if ds["free_gb"] >= need_gb:
+            candidates.append(ds)
+    if not candidates:
+        return None, False
+
+    alternate = [d for d in candidates if d["name"] not in source]
+    if alternate:
+        best = max(alternate, key=lambda d: d["free_gb"])
+        log_info(
+            f"[STAGING] Using alternate datastore '{best['name']}' "
+            f"({best['free_gb']:.0f} GB free) for temp copy"
+        )
+        return best["name"], False
+
+    best = max(candidates, key=lambda d: d["free_gb"])
+    log_warn(
+        f"[STAGING] No alternate datastore with {need_gb:.0f} GB free; "
+        f"using '{best['name']}' ({best['free_gb']:.0f} GB free)"
+    )
+    return best["name"], True
+
+
+def _export_snapshot_staged_stream(
+    si, vm_name, storage, dest_rel_dir, disk_descriptors, vmx_ds_name, vmx_rel_path,
+    config=None, progress_callback=None, speed_callback=None, is_cancelled_func=None,
+):
+    """
+    Live backup: snapshot → CopyVirtualDisk to staging datastore → HTTP stream → cleanup.
+    Staging datastore is chosen to avoid the VM's source datastore when possible.
+    """
+    content = si.RetrieveContent()
+    datacenter = content.rootFolder.childEntity[0]
+    snap_name = None
+    temp_ds_dir = None
+    files_downloaded = []
+
+    source_ds = {d["ds_name"] for d in disk_descriptors}
+    vm = _get_vm(si, vm_name)
+    disk_gb = _vm_disk_gb(vm) if vm else 10
+    headroom = getattr(config, "datastore_headroom_gb", 10) if config else 10
+    need_gb = disk_gb + float(headroom)
+
+    staging_ds, _ = _pick_staging_datastore(si, source_ds, need_gb)
+    if not staging_ds:
+        staging_ds = disk_descriptors[0]["ds_name"]
+        log_warn(f"[STAGING] Falling back to source datastore '{staging_ds}'")
+
+    try:
+        if progress_callback:
+            progress_callback(2)
+        snap_obj, snap_name = _create_backup_snapshot(si, vm_name)
+        if not snap_obj:
+            return False, f"Snapshot creation failed: {snap_name}"
+        if progress_callback:
+            progress_callback(5)
+
+        temp_folder = f"_backup_stream_{vm_name}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+        temp_ds_dir = f"[{staging_ds}] {temp_folder}"
+        fm = content.fileManager
+        fm.MakeDirectory(name=temp_ds_dir, datacenter=datacenter, createParentDirectories=True)
+        log_info(f"[STAGING] Temp directory: {temp_ds_dir}")
+
+        vdm = content.virtualDiskManager
+        total_disks = len(disk_descriptors)
+        copied_disks = []
+
+        for idx, disk in enumerate(disk_descriptors):
+            disk_basename = os.path.basename(disk["rel_path"])
+            dst_path = f"[{staging_ds}] {temp_folder}/{disk_basename}"
+            copy_start = 5 + (40 * idx // total_disks)
+            copy_end = 5 + (40 * (idx + 1) // total_disks)
+            if progress_callback:
+                progress_callback(copy_start)
+
+            log_info(f"[STAGING] Copying disk {idx + 1}/{total_disks} → {staging_ds}: {disk_basename}")
+            spec = vim.VirtualDiskManager.VirtualDiskSpec()
+            spec.diskType = "thin"
+            spec.adapterType = "lsiLogic"
+            task = vdm.CopyVirtualDisk_Task(
+                sourceName=disk["ds_path"], sourceDatacenter=datacenter,
+                destName=dst_path, destDatacenter=datacenter,
+                destSpec=spec, force=True,
+            )
+            t0 = time.time()
+            while task.info.state not in [vim.TaskInfo.State.success, vim.TaskInfo.State.error]:
+                if is_cancelled_func and is_cancelled_func():
+                    raise Exception("Backup cancelled by user")
+                if time.time() - t0 > 7200:
+                    raise Exception(f"Disk copy timeout for {disk_basename}")
+                if task.info.progress and progress_callback:
+                    pct = copy_start + (task.info.progress * (copy_end - copy_start) // 100)
+                    progress_callback(min(pct, copy_end))
+                time.sleep(5)
+            if task.info.state == vim.TaskInfo.State.error:
+                raise Exception(f"Disk copy failed: {task.info.error}")
+            copied_disks.append((staging_ds, f"{temp_folder}/{disk_basename}"))
+
+        if progress_callback:
+            progress_callback(50)
+        storage.makedirs(dest_rel_dir)
+
+        for idx, (ds_name, temp_rel_path) in enumerate(copied_disks):
+            disk_basename = os.path.basename(temp_rel_path)
+            flat_basename = disk_basename.replace(".vmdk", "-flat.vmdk")
+            flat_rel_path = temp_rel_path.replace(".vmdk", "-flat.vmdk")
+            dl_start = 50 + (38 * idx // len(copied_disks))
+            dl_mid = dl_start + 2
+            dl_end = 50 + (38 * (idx + 1) // len(copied_disks))
+
+            _download_file_http(
+                si, ds_name, temp_rel_path, storage, f"{dest_rel_dir}/{disk_basename}",
+                progress_callback=progress_callback, progress_base=dl_start, progress_total=2,
+                speed_callback=speed_callback, is_cancelled_func=is_cancelled_func,
+            )
+            files_downloaded.append(disk_basename)
+            _download_file_http(
+                si, ds_name, flat_rel_path, storage, f"{dest_rel_dir}/{flat_basename}",
+                progress_callback=progress_callback, progress_base=dl_mid,
+                progress_total=dl_end - dl_mid, speed_callback=speed_callback,
+                is_cancelled_func=is_cancelled_func,
+            )
+            files_downloaded.append(flat_basename)
+
+        if progress_callback:
+            progress_callback(90)
+        try:
+            fm.DeleteDatastoreFile_Task(name=temp_ds_dir, datacenter=datacenter)
+            temp_ds_dir = None
+            log_info("[STAGING] Temp directory removed.")
+        except Exception as e:
+            log_warn(f"[STAGING] Temp cleanup warning: {e}")
+
+        if progress_callback:
+            progress_callback(93)
+        _remove_backup_snapshot(si, vm_name, snap_name, timeout_mins=60)
+        snap_name = None
+
+        if progress_callback:
+            progress_callback(96)
+        if vmx_ds_name and vmx_rel_path:
+            vmx_filename = os.path.basename(vmx_rel_path)
+            try:
+                _download_file_http(
+                    si, vmx_ds_name, vmx_rel_path, storage, f"{dest_rel_dir}/{vmx_filename}",
+                )
+                files_downloaded.append(vmx_filename)
+            except Exception as e:
+                log_warn(f"[STAGING] VMX warning: {e}")
+
+        if progress_callback:
+            progress_callback(100)
+        return True, f"Backup completed [staged]: {len(files_downloaded)} file(s) saved to storage"
+
+    except Exception as e:
+        if snap_name:
+            try:
+                _remove_backup_snapshot(si, vm_name, snap_name, timeout_mins=30)
+            except Exception:
+                pass
+        if temp_ds_dir:
+            try:
+                fm.DeleteDatastoreFile_Task(name=temp_ds_dir, datacenter=datacenter)
+            except Exception:
+                pass
+        if is_cancelled_func and is_cancelled_func():
+            return False, "Backup cancelled by user"
+        return False, str(e)
+
+
+def _export_live_stream(
+    si, vm_name, storage, dest_rel_dir, disk_descriptors, vmx_ds_name, vmx_rel_path,
+    config=None, host_ip=None, host_user=None, host_password=None,
+    progress_callback=None, speed_callback=None, is_cancelled_func=None,
+    transport="nbd",
+):
+    """
+    Modern live backup: VDDK/NBD → NFC ExportSnapshot → cross-datastore staged stream.
+    """
+    if transport == "nbd":
+        import vddk_transport
+        if vddk_transport.is_available(config):
+            if not host_user or not host_password:
+                return False, "NBD/VDDK transport requires ESXi host credentials"
+            if not host_ip:
+                return False, "Cannot determine ESXi host IP for NBD transport"
+            return vddk_transport.export_live_nbd(
+                si=si, vm_name=vm_name, storage=storage, dest_rel_dir=dest_rel_dir,
+                disk_descriptors=disk_descriptors, vmx_ds_name=vmx_ds_name, vmx_rel_path=vmx_rel_path,
+                host_ip=host_ip, host_user=host_user, host_password=host_password, config=config,
+                progress_callback=progress_callback, speed_callback=speed_callback,
+                is_cancelled_func=is_cancelled_func,
+                create_snapshot_func=_create_backup_snapshot,
+                remove_snapshot_func=_remove_backup_snapshot,
+                download_vmx_func=_download_file_http,
+            )
+        log_info(
+            f"[BACKUP] VDDK unavailable ({vddk_transport.availability_message(config)}); "
+            "trying NFC ExportSnapshot"
+        )
+
+    if transport in ("nbd", "nfc"):
+        import nfc_transport
+        ok, msg = nfc_transport.export_live_nfc(
+            si=si, vm_name=vm_name, storage=storage, dest_rel_dir=dest_rel_dir,
+            disk_descriptors=disk_descriptors, vmx_ds_name=vmx_ds_name, vmx_rel_path=vmx_rel_path,
+            progress_callback=progress_callback, speed_callback=speed_callback,
+            is_cancelled_func=is_cancelled_func,
+            create_snapshot_func=_create_backup_snapshot,
+            remove_snapshot_func=_remove_backup_snapshot,
+            download_http_func=_download_file_http,
+        )
+        if ok:
+            return True, msg
+        if "NotSupported" in msg or "not supported" in msg.lower():
+            log_info("[BACKUP] ExportSnapshot not supported on this host; using cross-datastore staged stream")
+        else:
+            return False, msg
+
+    return _export_snapshot_staged_stream(
+        si, vm_name, storage, dest_rel_dir, disk_descriptors, vmx_ds_name, vmx_rel_path,
+        config=config, progress_callback=progress_callback, speed_callback=speed_callback,
+        is_cancelled_func=is_cancelled_func,
+    )
 
 
 def _vm_disk_gb(vm):
@@ -830,8 +1084,9 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
     POWERED OFF → Direct HTTP stream (no snapshot, no CopyVirtualDisk).
 
     POWERED ON / SUSPENDED → config.backup_transport:
-      legacy — Snapshot + CopyVirtualDisk temp on ESXi + HTTP stream (default)
-      nbd    — Snapshot + VDDK/NBD stream (no temp on ESXi; requires VDDK + nbdkit)
+      nbd    — VDDK/NBD if installed, else NFC ExportSnapshot stream (default)
+      nfc    — Snapshot + HttpNfcLease ExportSnapshot stream (no ESXi temp copy)
+      legacy — Snapshot + CopyVirtualDisk temp on ESXi + HTTP stream
     """
     vm = _get_vm(si, vm_name)
     if not vm:
@@ -841,7 +1096,7 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
     snap_name = None
     temp_ds_dir = None
     host_ip = host_ip or _get_host_ip(si)
-    transport = getattr(config, "backup_transport", "legacy") if config else "legacy"
+    transport = getattr(config, "backup_transport", "nbd") if config else "nbd"
 
     for attempt in range(1, max_retries + 1):
         log_info(f"[BACKUP] Attempt {attempt}/{max_retries} for {vm_name}")
@@ -855,7 +1110,7 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
 
             is_off, disk_descriptors, vmx_ds_name, vmx_rel_path = _collect_vm_disk_layout(vm)
             power_state = getattr(vm.runtime, "powerState", "poweredOn")
-            live_method = "nbd" if transport == "nbd" else "snapshot+copy"
+            live_method = {"nbd": "NBD/NFC", "nfc": "NFC"}.get(transport, "snapshot+copy")
             log_info(
                 f"[BACKUP] VM power state: {power_state} -> "
                 f"using {'DIRECT' if is_off else live_method.upper()} method"
@@ -903,31 +1158,13 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
                     )
                     files_downloaded.append(flat_basename)
 
-            elif transport == "nbd":
-                import vddk_transport
-                if not host_user or not host_password:
-                    raise Exception("NBD transport requires ESXi host credentials")
-                if not host_ip:
-                    raise Exception("Cannot determine ESXi host IP for NBD transport")
-
-                ok, result_msg = vddk_transport.export_live_nbd(
-                    si=si,
-                    vm_name=vm_name,
-                    storage=storage,
-                    dest_rel_dir=dest_rel_dir,
-                    disk_descriptors=disk_descriptors,
-                    vmx_ds_name=vmx_ds_name,
-                    vmx_rel_path=vmx_rel_path,
-                    host_ip=host_ip,
-                    host_user=host_user,
-                    host_password=host_password,
-                    config=config,
-                    progress_callback=progress_callback,
-                    speed_callback=speed_callback,
-                    is_cancelled_func=is_cancelled_func,
-                    create_snapshot_func=_create_backup_snapshot,
-                    remove_snapshot_func=_remove_backup_snapshot,
-                    download_vmx_func=_download_file_http,
+            elif transport in ("nbd", "nfc"):
+                ok, result_msg = _export_live_stream(
+                    si=si, vm_name=vm_name, storage=storage, dest_rel_dir=dest_rel_dir,
+                    disk_descriptors=disk_descriptors, vmx_ds_name=vmx_ds_name, vmx_rel_path=vmx_rel_path,
+                    config=config, host_ip=host_ip, host_user=host_user, host_password=host_password,
+                    progress_callback=progress_callback, speed_callback=speed_callback,
+                    is_cancelled_func=is_cancelled_func, transport=transport,
                 )
                 if not ok:
                     raise Exception(result_msg)
