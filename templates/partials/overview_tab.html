@@ -57,11 +57,15 @@
                 <span id="ov-storage-type" class="overview-chip">—</span>
             </div>
             <div class="overview-panel-body">
-                <div id="ov-storage-path" class="text-xs font-mono mb-4 truncate" style="color: var(--text-muted)" title="">—</div>
+                <div class="mb-1">
+                    <div class="text-[11px] font-medium uppercase tracking-wide" style="color: var(--text-muted)">Backup path on NovaBak server</div>
+                    <div id="ov-storage-path" class="text-xs font-mono mt-1 truncate" style="color: var(--brand)" title="">—</div>
+                    <p class="text-[11px] mt-1 leading-snug" style="color: var(--text-muted)">Configured in Settings → Storage. All backup files are written under this folder.</p>
+                </div>
 
-                <div class="mb-4">
+                <div class="mb-4 pt-3 border-t" style="border-color: var(--border-color)">
                     <div class="flex justify-between text-xs mb-1.5">
-                        <span style="color: var(--text-muted)">Backup repository</span>
+                        <span style="color: var(--text-muted)">Backup data at this path</span>
                         <span id="ov-storage-used-label" class="font-semibold">—</span>
                     </div>
                     <div id="ov-storage-bar-wrap" class="overview-bar-track hidden">
@@ -72,13 +76,14 @@
 
                 <div id="ov-disk-section" class="hidden pt-3 border-t" style="border-color: var(--border-color)">
                     <div class="flex justify-between text-xs mb-1.5">
-                        <span style="color: var(--text-muted)">Target disk free</span>
+                        <span style="color: var(--text-muted)">Disk free (volume hosting path)</span>
                         <span id="ov-disk-free-label" class="font-semibold">—</span>
                     </div>
                     <div class="overview-bar-track">
                         <div id="ov-disk-bar" class="overview-bar-fill overview-bar-disk" style="width: 0%"></div>
                     </div>
                     <div id="ov-disk-meta" class="text-[11px] mt-1.5" style="color: var(--text-muted)">—</div>
+                    <p class="text-[10px] mt-1.5 leading-snug opacity-70" style="color: var(--text-muted)">Entire filesystem where the backup path lives — used for preflight free-space checks.</p>
                 </div>
 
                 <div id="ov-storage-error" class="hidden mt-3 text-xs text-red-400"></div>

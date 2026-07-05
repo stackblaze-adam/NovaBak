@@ -749,7 +749,7 @@
                 pathEl.title = st.path || '';
             }
             set('ov-storage-used-label', st.total_human || '—');
-            set('ov-storage-meta', `${st.version_count ?? 0} versions · ${st.vm_count ?? 0} VMs in repo`);
+            set('ov-storage-meta', `${st.version_count ?? 0} backup version(s) · ${st.vm_count ?? 0} VM folder(s) under this path`);
 
             const diskSection = document.getElementById('ov-disk-section');
             const barWrap = document.getElementById('ov-storage-bar-wrap');
@@ -758,7 +758,7 @@
                 const usedPct = Math.min(100, Math.round(100 * (st.disk_used_gb / st.disk_total_gb)));
                 const freePct = st.disk_free_pct ?? 0;
                 set('ov-disk-free-label', `${st.disk_free_gb} GB free (${freePct}%)`);
-                set('ov-disk-meta', `${st.disk_used_gb} GB used of ${st.disk_total_gb} GB total`);
+                set('ov-disk-meta', `Volume total: ${st.disk_total_gb} GB · ${st.disk_used_gb} GB used (includes OS, other files, and backups)`);
                 const diskBar = document.getElementById('ov-disk-bar');
                 if (diskBar) {
                     diskBar.style.width = `${freePct}%`;
