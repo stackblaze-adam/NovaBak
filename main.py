@@ -1,6 +1,7 @@
 import os
 import sys
 import uvicorn
+from urllib.parse import quote
 from fastapi import FastAPI, Depends, Request, Form, status, HTTPException
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -411,14 +412,21 @@ def add_esxi_host(
 ):
     require_auth(request)
     try:
-        backup_ops.add_esxi_host(db, name, host_ip, username, password, connection_type)
+        host = backup_ops.add_esxi_host(db, name, host_ip, username, password, connection_type)
     except ValueError as e:
-        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={e}", status_code=303)
+        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={quote(str(e))}", status_code=303)
     except ConnectionError as e:
-        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={e}", status_code=303)
+        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={quote(str(e))}", status_code=303)
     except Exception as e:
-        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={e}", status_code=303)
-    return RedirectResponse(url="/?tab=settings&panel=hosts", status_code=303)
+        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={quote(str(e))}", status_code=303)
+    bootstrap = getattr(host, "_vddk_bootstrap", None) or {}
+    vddk_ok = "1" if bootstrap.get("vddk_installed") else "0"
+    vddk_msg = quote(bootstrap.get("vddk_message") or "", safe="")
+    host_name = quote(host.name or name, safe="")
+    return RedirectResponse(
+        url=f"/?tab=settings&panel=hosts&host_ok=1&host_name={host_name}&vddk_ok={vddk_ok}&vddk_msg={vddk_msg}",
+        status_code=303,
+    )
 
 @app.post("/delete_esxi_host")
 def delete_esxi_host(request: Request, host_id: int = Form(...), db: Session = Depends(get_db)):
@@ -427,9 +435,7 @@ def delete_esxi_host(request: Request, host_id: int = Form(...), db: Session = D
     if host:
         db.delete(host)
         db.commit()
-    return RedirectResponse(url="/?tab=settings&panel=hosts", status_code=303)
-
-@app.post("/fetch_vms")
+    return RedirectResponse(url="/?tab=settings&panel=hosts&host_removed=1", status_code=303)
 def fetch_vms(request: Request, esxi_host_id: int = Form(...), db: Session = Depends(get_db)):
     try:
         require_auth(request)

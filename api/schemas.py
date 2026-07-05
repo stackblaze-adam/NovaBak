@@ -152,6 +152,8 @@ class ESXiHostResponse(BaseModel):
     username: str
     connection_type: str = "auto"
     connection_label: str = "Auto-detect"
+    vddk_installed: Optional[bool] = None
+    vddk_message: Optional[str] = None
 
 
 class VmUpdate(BaseModel):

@@ -646,6 +646,25 @@
             }
         }
 
+        function showHostAddResultModal(hostName, vddkInstalled, vddkMessage) {
+            const title = vddkInstalled ? 'Host added — VDDK ready' : 'Host added — VDDK setup';
+            const lines = [
+                hostName ? `Registered ${hostName}.` : 'Host registered.',
+                '',
+                vddkInstalled
+                    ? 'Auto-install VDDK: success.'
+                    : 'Auto-install VDDK: not completed.',
+                vddkMessage || (vddkInstalled
+                    ? 'Live backup transport is set to VDDK / NBD.'
+                    : 'Place a VMware-vix-disklib tarball in vendor/vddk/ on the server, or install VDDK manually.'),
+            ];
+            const msgEl = document.getElementById('appModalMessage');
+            if (msgEl) msgEl.style.whiteSpace = 'pre-line';
+            showAlert(lines.join('\n'), { title, confirmText: 'OK' }).finally(() => {
+                if (msgEl) msgEl.style.whiteSpace = '';
+            });
+        }
+
         let _overviewLoading = false;
         let _overviewLastFetch = 0;
 
@@ -1323,12 +1342,25 @@
             const hostErr = params.get('error');
             if (hostErr && (settingsPanel === 'hosts' || activeTab === 'tab-settings')) {
                 switchTab('tab-settings', { settingsPanel: 'hosts' });
-                showHostsPanelMessage(hostErr, 'error');
-            } else if (activeTab === 'tab-settings' && settingsPanel === 'hosts' && !hostErr) {
-                showHostsPanelMessage('Host saved.', 'success');
+                showHostsPanelMessage(decodeURIComponent(hostErr), 'error');
+            } else if (params.get('host_ok') === '1' && settingsPanel === 'hosts') {
+                switchTab('tab-settings', { settingsPanel: 'hosts' });
+                const hostName = decodeURIComponent(params.get('host_name') || '');
+                const vddkInstalled = params.get('vddk_ok') === '1';
+                const vddkMessage = decodeURIComponent(params.get('vddk_msg') || '');
+                showHostsPanelMessage(
+                    vddkInstalled
+                        ? `${hostName || 'Host'} saved. VDDK is ready for live backups.`
+                        : `${hostName || 'Host'} saved. VDDK auto-install did not complete — see details.`,
+                    vddkInstalled ? 'success' : 'error'
+                );
+                setTimeout(() => showHostAddResultModal(hostName, vddkInstalled, vddkMessage), 150);
+            } else if (params.get('host_removed') === '1' && settingsPanel === 'hosts') {
+                switchTab('tab-settings', { settingsPanel: 'hosts' });
+                showHostsPanelMessage('Host removed.', 'success');
             }
 
-            if (params.get('tab') || params.get('panel') || params.get('error') || params.get('profile_saved') || params.get('purge_started')) {
+            if (params.get('tab') || params.get('panel') || params.get('error') || params.get('profile_saved') || params.get('purge_started') || params.get('host_ok') || params.get('host_removed') || params.get('vddk_msg')) {
                 window.history.replaceState({}, '', window.location.pathname);
             }
             
@@ -2949,6 +2981,7 @@
             if (!wizardState.hosts.some(h => h.id === host.id)) wizardState.hosts.push(host);
             wizardRefreshHostList();
             document.getElementById('wizard-host-pass').value = '';
+            showHostAddResultModal(host.name, !!host.vddk_installed, host.vddk_message || '');
         } catch (e) {
             wizardShowError(e.message);
         }

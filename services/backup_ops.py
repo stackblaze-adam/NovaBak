@@ -195,6 +195,10 @@ def host_to_dict(host, include_secrets=False):
             conn if conn != vsphere_context.CONN_AUTO else vsphere_context.CONN_STANDALONE
         ) if conn != vsphere_context.CONN_AUTO else "Auto-detect",
     }
+    bootstrap = getattr(host, "_vddk_bootstrap", None)
+    if bootstrap:
+        data["vddk_installed"] = bootstrap.get("vddk_installed")
+        data["vddk_message"] = bootstrap.get("vddk_message")
     if include_secrets:
         data["password"] = host.password
     return data
