@@ -1,0 +1,39 @@
+{# Per-VM incremental (CBT) backup toggle #}
+{% set cbt_on = vm.cbt_enabled is not defined or vm.cbt_enabled %}
+{% if form_style == 'inline' %}
+<div class="flex items-center gap-1.5 shrink-0">
+    <span class="text-[11px] font-semibold uppercase opacity-50 whitespace-nowrap">CBT</span>
+    <label class="flex items-center gap-1.5 cursor-pointer shrink-0" title="Incremental backups using VMware Changed Block Tracking. Requires local or NFS storage.">
+        <div class="relative w-10 h-5">
+            <input type="checkbox" name="cbt_enabled" value="True"
+                   {% if cbt_on %}checked{% endif %}
+                   class="sr-only peer"
+                   onchange="updateCbtLabel({{ vm.id }}); autoSaveJob({{ vm.id }}, this.form)">
+            <div class="absolute inset-0 rounded-full bg-gray-600 peer-checked:bg-[var(--brand)] transition-colors"></div>
+            <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow peer-checked:translate-x-5 transition-transform"></div>
+        </div>
+        <span class="job-cbt-label text-xs font-medium whitespace-nowrap {% if cbt_on %}text-[var(--brand)]{% else %}opacity-60{% endif %}" id="cbt-label-{{ vm.id }}">
+            {% if cbt_on %}Incremental{% else %}Full only{% endif %}
+        </span>
+    </label>
+</div>
+{% else %}
+<div class="pt-2 mt-2 job-cbt-row" style="border-top: 1px dashed var(--border-color)">
+    <div class="flex items-center gap-2">
+        <span class="input-label text-[10px] shrink-0">CBT</span>
+        <label class="flex items-center gap-2 cursor-pointer flex-1 min-w-0" title="Incremental backups using VMware Changed Block Tracking. Requires local or NFS storage.">
+            <div class="relative flex-shrink-0 w-9 h-5">
+                <input type="checkbox" name="cbt_enabled" value="True"
+                       {% if cbt_on %}checked{% endif %}
+                       class="sr-only peer"
+                       onchange="updateCbtLabel({{ vm.id }}); autoSaveJob({{ vm.id }}, this.form)">
+                <div class="absolute inset-0 rounded-full bg-gray-600 peer-checked:bg-[var(--brand)] transition-colors"></div>
+                <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow peer-checked:translate-x-4 transition-transform"></div>
+            </div>
+            <span class="job-cbt-label text-[10px] font-medium leading-tight {% if cbt_on %}text-[var(--brand)]{% else %}opacity-60{% endif %}" id="cbt-label-{{ vm.id }}">
+                {% if cbt_on %}Incremental — delta after first full{% else %}Full only — no incrementals{% endif %}
+            </span>
+        </label>
+    </div>
+</div>
+{% endif %}

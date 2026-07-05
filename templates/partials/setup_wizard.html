@@ -17,6 +17,8 @@
                 </button>
             </div>
 
+            <div id="wizardError" class="wizard-error-banner hidden" role="alert"></div>
+
             <div class="wizard-layout">
 
                 <nav class="wizard-nav" id="wizardStepIndicators" aria-label="Setup steps">
@@ -43,8 +45,6 @@
                 </nav>
 
                 <div class="wizard-content">
-                    <div id="wizardError" class="hidden absolute top-3 left-4 right-4 z-10 px-4 py-3 rounded text-sm font-medium" style="background:rgba(239,68,68,0.12); color:#f87171;"></div>
-
                     <!-- Step 1: Storage -->
                     {% set wizard_st = (config.storage_type or 'NFS')|upper %}
                     <div class="wizard-step" data-wizard-step="1">
@@ -115,13 +115,20 @@
                     <!-- Step 2: Hosts -->
                     <div class="wizard-step hidden" data-wizard-step="2">
                         <div class="wizard-step-inner">
-                            <h3 class="font-semibold text-base mb-1 flex-shrink-0">ESXi hosts</h3>
-                            <p class="text-sm mb-5 flex-shrink-0" style="color: var(--text-muted)">Register ESXi hosts using direct host credentials (typically <code class="text-xs font-mono px-1 rounded" style="background:var(--bg-nav)">root</code>). VM inventory is discovered automatically when you continue.</p>
+                            <h3 class="font-semibold text-base mb-1 flex-shrink-0">ESXi / vCenter</h3>
+                            <p class="text-sm mb-5 flex-shrink-0" style="color: var(--text-muted)">Register a standalone ESXi host or a vCenter Server. Live backups use VDDK/NBD (ESXi and vCenter) or NFC ExportSnapshot (vCenter only).</p>
                             <div class="flex flex-wrap items-end gap-2 mb-4 flex-shrink-0">
-                                <div class="flex-1 min-w-[5.5rem]"><span class="input-label">Alias</span><input type="text" id="wizard-host-name" placeholder="esxi-01" class="w-full py-2 px-3 text-sm mt-1"></div>
+                                <div class="flex-1 min-w-[5.5rem]"><span class="input-label">Alias</span><input type="text" id="wizard-host-name" placeholder="esxi-01 or vcenter-prod" class="w-full py-2 px-3 text-sm mt-1"></div>
                                 <div class="flex-[1.4] min-w-[7rem]"><span class="input-label">IP / FQDN</span><input type="text" id="wizard-host-ip" placeholder="esxi.example.com" class="w-full py-2 px-3 font-mono text-sm mt-1"></div>
                                 <div class="w-24 min-w-[5rem]"><span class="input-label">Username</span><input type="text" id="wizard-host-user" value="root" class="w-full py-2 px-3 text-sm mt-1"></div>
                                 <div class="w-28 min-w-[5.5rem]"><span class="input-label">Password</span><input type="password" id="wizard-host-pass" class="w-full py-2 px-3 text-sm mt-1"></div>
+                                <div class="w-36 min-w-[8rem]"><span class="input-label">Connection</span>
+                                    <select id="wizard-host-type" class="w-full py-2 px-3 text-sm mt-1">
+                                        <option value="auto">Auto-detect</option>
+                                        <option value="standalone">Standalone ESXi</option>
+                                        <option value="vcenter">vCenter Server</option>
+                                    </select>
+                                </div>
                                 <button type="button" onclick="wizardAddHost()" class="btn-secondary px-4 py-2 text-sm font-medium whitespace-nowrap mb-0.5">Add Host</button>
                             </div>
                             <div class="card overflow-hidden wizard-step-scroll flex flex-col min-h-0">
@@ -243,6 +250,26 @@
                                     </div>
                                     <span class="text-[10px] font-semibold leading-tight text-[var(--text-muted)]">Stagger by host (+1 hour per host)</span>
                                 </label>
+                            </div>
+
+                            <div class="pt-4 mt-4 max-w-md" style="border-top: 1px solid var(--border-color)">
+                                <h4 class="text-sm font-semibold mb-1">Incremental backups (CBT)</h4>
+                                <p class="text-xs mb-3" style="color: var(--text-muted)">First backup is full; later runs store only changed blocks. Per-VM override available under Tasks.</p>
+                                <div class="space-y-3">
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="checkbox" id="wizard-cbt-enabled" checked class="rounded w-4 h-4">
+                                        <span class="text-sm font-medium">Enable incremental backups for selected VMs</span>
+                                    </label>
+                                    <div>
+                                        <span class="input-label text-[10px]">Full backup interval</span>
+                                        <input type="number" id="wizard-cbt-interval" value="7" min="1" max="60"
+                                               class="w-24 px-2 py-1 text-center font-mono text-sm mt-1">
+                                        <span class="text-[10px] opacity-60 ml-2">incrementals before synthetic full</span>
+                                    </div>
+                                </div>
+                                <p id="wizard-cbt-s3-note" class="hidden mt-3 text-xs px-3 py-2 rounded" style="background: rgba(234,179,8,0.12); color: #eab308;">
+                                    S3 storage selected in step 1 — incremental backups are unavailable; full backups only.
+                                </p>
                             </div>
                         </div>
                     </div>

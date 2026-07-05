@@ -49,6 +49,8 @@ class ESXiHost(Base):
     host_ip = Column(String)
     username = Column(String)
     password = Column(String) # For production this should ideally be encrypted
+    # standalone | vcenter | auto (detect on connect)
+    connection_type = Column(String, default="auto")
     
     # Establish a relationship with VMs
     vms = relationship("VM", back_populates="esxi_host", cascade="all, delete-orphan")
@@ -84,8 +86,13 @@ class Config(Base):
     datastore_headroom_gb = Column(Integer, default=10)
     datastore_est_multiplier = Column(Float, default=2.0)
     scheduler_paused = Column(Boolean, default=False)
-
-    # Storage Settings
+    # Backup transport: legacy (CopyVirtualDisk temp) | nbd (VDDK/NFC stream)
+    backup_transport = Column(String, default="nbd")
+    repo_min_free_gb = Column(Integer, default=50)
+    exclude_infra_vms = Column(Boolean, default=False)
+    # CBT / incremental backup settings
+    cbt_enabled = Column(Boolean, default=True)
+    cbt_full_interval = Column(Integer, default=7)  # incremental count before forced full
     storage_type = Column(String, default="SMB") # SMB, NFS, S3
     nfs_path = Column(String, default="")
     s3_endpoint = Column(String, default="")
@@ -126,6 +133,7 @@ class VM(Base):
     power_state = Column(String, default="Unknown") # poweredOn, poweredOff, etc.
     speed_mbps = Column(Float, default=0.0)  # Last known transfer speed
     power_off_for_backup = Column(Boolean, default=False)  # Shutdown VM before backup for faster direct-stream path
+    cbt_enabled = Column(Boolean, default=True)  # Per-VM CBT; None would inherit config — use True default
 
 class BackupLog(Base):
     __tablename__ = "backup_logs"
@@ -202,6 +210,14 @@ def init_db():
             ("datastore_headroom_gb", "ALTER TABLE config ADD COLUMN datastore_headroom_gb INTEGER DEFAULT 10"),
             ("datastore_est_multiplier", "ALTER TABLE config ADD COLUMN datastore_est_multiplier REAL DEFAULT 2.0"),
             ("scheduler_paused", "ALTER TABLE config ADD COLUMN scheduler_paused BOOLEAN DEFAULT 0"),
+            ("backup_transport", "ALTER TABLE config ADD COLUMN backup_transport VARCHAR DEFAULT 'legacy'"),
+            ("repo_min_free_gb", "ALTER TABLE config ADD COLUMN repo_min_free_gb INTEGER DEFAULT 50"),
+            ("exclude_infra_vms", "ALTER TABLE config ADD COLUMN exclude_infra_vms BOOLEAN DEFAULT 1"),
+            ("vddk_libdir", "ALTER TABLE config ADD COLUMN vddk_libdir VARCHAR DEFAULT '/opt/vmware-vix-disklib-distrib'"),
+            ("connection_type", "ALTER TABLE esxi_hosts ADD COLUMN connection_type VARCHAR DEFAULT 'auto'"),
+            ("cbt_enabled", "ALTER TABLE config ADD COLUMN cbt_enabled BOOLEAN DEFAULT 1"),
+            ("cbt_full_interval", "ALTER TABLE config ADD COLUMN cbt_full_interval INTEGER DEFAULT 7"),
+            ("vm_cbt_enabled", "ALTER TABLE vms ADD COLUMN cbt_enabled BOOLEAN DEFAULT 1"),
         ]
         
         from logger_util import log_info, log_warn

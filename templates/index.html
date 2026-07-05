@@ -274,6 +274,62 @@
         .overview-bar-fill.overview-bar-warn { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
         .overview-bar-fill.overview-bar-danger { background: linear-gradient(90deg, #ef4444, #f87171); }
         .overview-bar-disk { background: linear-gradient(90deg, #10b981, #34d399); }
+        .overview-storage-path-line {
+            display: flex; align-items: baseline; gap: 0.35rem;
+            min-width: 0; margin-bottom: 0.25rem;
+        }
+        .overview-storage-path-line .font-mono { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .overview-storage-disk {
+            padding-top: 0.75rem; margin-top: 0.75rem;
+            border-top: 1px solid var(--border-color);
+        }
+        .overview-donut-wrap {
+            display: flex; justify-content: center;
+            margin: 1.5rem 0 1.5rem;
+        }
+        .overview-ring-lg { width: 7.5rem; height: 7.5rem; }
+        .overview-ring-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+        .overview-ring-bg { fill: none; stroke: var(--border-color); stroke-width: 3.2; }
+        .overview-ring-seg {
+            fill: none; stroke-width: 3.2; stroke-linecap: butt;
+            stroke-dasharray: 0 100; stroke-dashoffset: 0;
+            transition: stroke-dasharray 0.45s ease, stroke-dashoffset 0.45s ease;
+        }
+        .ring-free, .overview-legend-swatch.ring-free { background: #10b981; stroke: #10b981; }
+        .ring-used, .overview-legend-swatch.ring-used { background: #64748b; stroke: #64748b; }
+        .ring-backup, .overview-legend-swatch.ring-backup { background: var(--brand); stroke: var(--brand); }
+        .ring-warn.ring-free, .overview-legend-swatch.ring-warn { background: #f59e0b; stroke: #f59e0b; }
+        .ring-danger.ring-free, .overview-legend-swatch.ring-danger { background: #ef4444; stroke: #ef4444; }
+        .overview-ring-center {
+            position: absolute; inset: 0; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; pointer-events: none; text-align: center;
+        }
+        .overview-ring {
+            position: relative; margin: 0 auto;
+        }
+        .overview-ring-value {
+            font-size: 0.875rem; font-weight: 700; line-height: 1.1;
+            font-variant-numeric: tabular-nums;
+        }
+        .overview-ring-pct {
+            font-size: 0.625rem; font-weight: 600; margin-top: 0.15rem;
+            color: var(--text-muted);
+        }
+        .overview-donut-legend-line {
+            display: flex; flex-wrap: nowrap; align-items: center; justify-content: center;
+            gap: 0.5rem; margin-top: 0.25rem; margin-bottom: 0.25rem;
+            font-size: 0.625rem; color: var(--text-muted);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .overview-legend-item { display: inline-flex; align-items: center; gap: 0.25rem; flex-shrink: 0; }
+        .overview-legend-sep { opacity: 0.45; flex-shrink: 0; }
+        .overview-legend-swatch {
+            width: 0.45rem; height: 0.45rem; border-radius: 9999px; flex-shrink: 0;
+        }
+        .overview-ring-meta {
+            font-size: 0.625rem; line-height: 1.35;
+            color: var(--text-muted); opacity: 0.85;
+        }
         .overview-status-row { display: flex; align-items: center; gap: 0.5rem; }
         .overview-status-row-label { width: 4.5rem; font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); flex-shrink: 0; }
         .overview-status-row-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--border-color); overflow: hidden; }
@@ -334,6 +390,17 @@
         .wizard-topbar {
             display: flex; justify-content: space-between; align-items: center; gap: 1rem;
             padding: 1.125rem 1.5rem; border-bottom: 1px solid var(--border-color); background: var(--bg-nav);
+        }
+        .wizard-error-banner {
+            flex-shrink: 0;
+            margin: 0;
+            padding: 0.75rem 1.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            line-height: 1.45;
+            border-bottom: 1px solid rgba(239, 68, 68, 0.25);
+            background: rgba(239, 68, 68, 0.12);
+            color: #f87171;
         }
         .wizard-close {
             padding: 0.375rem; border-radius: 0.375rem; color: var(--text-muted);
@@ -542,6 +609,13 @@
             if (tabParam && document.getElementById('tab-' + tabParam)) {
                 return 'tab-' + tabParam;
             }
+            if (params.get('profile_saved') || params.get('purge_started')) {
+                return 'tab-settings';
+            }
+            const stored = localStorage.getItem('activeTab');
+            if (stored && document.getElementById(stored)) {
+                return stored;
+            }
             return 'tab-overview';
         }
 
@@ -600,7 +674,8 @@
             closeNavMobileMenu();
         }
 
-        function switchTab(tabId) {
+        function switchTab(tabId, options) {
+            options = options || {};
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             const panel = document.getElementById(tabId);
             if (!panel) return;
@@ -612,7 +687,8 @@
                 loadGroupedBackups();
             }
             if (tabId === 'tab-settings' && typeof showSettingsPanel === 'function') {
-                showSettingsPanel(localStorage.getItem('settingsPanel') || 'profile');
+                const settingsPanel = options.settingsPanel || localStorage.getItem('settingsPanel') || 'profile';
+                showSettingsPanel(settingsPanel);
                 if (sessionStorage.getItem('novabak_open_wizard') === '1') {
                     sessionStorage.removeItem('novabak_open_wizard');
                     setTimeout(() => { if (typeof window.openSetupWizard === 'function') window.openSetupWizard(); }, 50);
@@ -621,6 +697,39 @@
             if (tabId === 'tab-overview' && typeof refreshOverview === 'function') {
                 refreshOverview(false);
             }
+        }
+
+        function showHostsPanelMessage(text, kind) {
+            const msg = document.getElementById('hosts-action-msg');
+            if (!msg) return;
+            msg.textContent = text;
+            msg.classList.remove('hidden');
+            if (kind === 'error') {
+                msg.style.background = 'rgba(239,68,68,0.12)';
+                msg.style.color = '#f87171';
+            } else {
+                msg.style.background = 'rgba(34,197,94,0.12)';
+                msg.style.color = '#4ade80';
+            }
+        }
+
+        function showHostAddResultModal(hostName, vddkInstalled, vddkMessage) {
+            const title = vddkInstalled ? 'Host added — VDDK ready' : 'Host added — VDDK setup';
+            const lines = [
+                hostName ? `Registered ${hostName}.` : 'Host registered.',
+                '',
+                vddkInstalled
+                    ? 'Auto-install VDDK: success.'
+                    : 'Auto-install VDDK: not completed.',
+                vddkMessage || (vddkInstalled
+                    ? 'Live backup transport is set to VDDK / NBD.'
+                    : 'Place a VMware-vix-disklib tarball in vendor/vddk/ on the server, or install VDDK manually.'),
+            ];
+            const msgEl = document.getElementById('appModalMessage');
+            if (msgEl) msgEl.style.whiteSpace = 'pre-line';
+            showAlert(lines.join('\n'), { title, confirmText: 'OK' }).finally(() => {
+                if (msgEl) msgEl.style.whiteSpace = '';
+            });
         }
 
         let _overviewLoading = false;
@@ -663,6 +772,14 @@
             }).join('');
         }
 
+        function setOverviewDonutSeg(circleEl, pct, offsetPct) {
+            if (!circleEl) return;
+            const p = Math.min(100, Math.max(0, pct));
+            const rest = Math.max(0, 100 - p);
+            circleEl.style.strokeDasharray = `${p} ${rest}`;
+            circleEl.style.strokeDashoffset = String(-offsetPct);
+        }
+
         function overviewRenderOverview(data) {
             const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
 
@@ -690,37 +807,49 @@
 
             const st = data.storage || {};
             set('ov-storage-type', st.type || '—');
+            const pathLine = document.getElementById('ov-storage-path-line');
             const pathEl = document.getElementById('ov-storage-path');
             if (pathEl) {
                 pathEl.textContent = st.path || '—';
-                pathEl.title = st.path || '';
             }
-            set('ov-storage-used-label', st.total_human || '—');
-            set('ov-storage-meta', `${st.version_count ?? 0} versions · ${st.vm_count ?? 0} VMs in repo`);
+            if (pathLine) {
+                pathLine.title = st.path || '';
+            }
 
-            const diskSection = document.getElementById('ov-disk-section');
-            const barWrap = document.getElementById('ov-storage-bar-wrap');
+            const diskBlock = document.getElementById('ov-storage-disk');
             if (st.disk_total_gb != null && st.disk_free_gb != null) {
-                diskSection?.classList.remove('hidden');
-                const usedPct = Math.min(100, Math.round(100 * (st.disk_used_gb / st.disk_total_gb)));
+                diskBlock?.classList.remove('hidden');
                 const freePct = st.disk_free_pct ?? 0;
-                set('ov-disk-free-label', `${st.disk_free_gb} GB free (${freePct}%)`);
-                set('ov-disk-meta', `${st.disk_used_gb} GB used of ${st.disk_total_gb} GB total`);
-                const diskBar = document.getElementById('ov-disk-bar');
-                if (diskBar) {
-                    diskBar.style.width = `${freePct}%`;
-                    diskBar.classList.toggle('overview-bar-danger', freePct < 15);
-                    diskBar.classList.toggle('overview-bar-warn', freePct >= 15 && freePct < 25);
-                }
-                if (barWrap && st.total_bytes) {
-                    barWrap.classList.remove('hidden');
-                    const repoPct = Math.min(100, Math.round(100 * (st.total_bytes / (1024 ** 3)) / st.disk_total_gb));
-                    const repoBar = document.getElementById('ov-storage-bar');
-                    if (repoBar) repoBar.style.width = `${Math.max(repoPct, 2)}%`;
-                }
+                const usedPct = Math.min(100, Math.max(0, 100 - freePct));
+                const backupGb = st.total_bytes ? (st.total_bytes / (1024 ** 3)) : 0;
+                const backupPct = st.disk_total_gb
+                    ? Math.min(usedPct, Math.round(100 * backupGb / st.disk_total_gb))
+                    : 0;
+                const otherUsedPct = Math.max(0, usedPct - backupPct);
+
+                const freeSeg = document.getElementById('ov-disk-seg-free');
+                const backupSeg = document.getElementById('ov-disk-seg-backup');
+                const usedSeg = document.getElementById('ov-disk-seg-used');
+                freeSeg?.classList.remove('ring-warn', 'ring-danger');
+                if (freePct < 15) freeSeg?.classList.add('ring-danger');
+                else if (freePct < 25) freeSeg?.classList.add('ring-warn');
+
+                // One ring, clockwise from top: free → backups → other used
+                setOverviewDonutSeg(freeSeg, freePct, 0);
+                setOverviewDonutSeg(backupSeg, backupPct, freePct);
+                setOverviewDonutSeg(usedSeg, otherUsedPct, freePct + backupPct);
+
+                set('ov-disk-center-main', `${st.disk_free_gb} GB`);
+                set('ov-disk-center-sub', `${freePct}% free`);
+                const otherUsedGb = Math.max(0, Math.round((st.disk_used_gb - backupGb) * 10) / 10);
+                set('ov-legend-free', `${st.disk_free_gb} GB`);
+                set('ov-legend-used', `${otherUsedGb} GB`);
+                set('ov-legend-backup', st.total_human || '0 GB');
+                const showUsed = otherUsedGb > 0 && otherUsedPct > 0;
+                document.getElementById('ov-legend-used-wrap')?.classList.toggle('hidden', !showUsed);
+                document.getElementById('ov-legend-used-sep')?.classList.toggle('hidden', !showUsed);
             } else {
-                diskSection?.classList.add('hidden');
-                barWrap?.classList.add('hidden');
+                diskBlock?.classList.add('hidden');
             }
 
             const errEl = document.getElementById('ov-storage-error');
@@ -741,6 +870,7 @@
             });
 
             set('ov-hosts', data.host_count ?? '0');
+            set('ov-hosts-label', data.host_label || 'Registered hosts');
             set('ov-inventory', data.inventory_count ?? '0');
 
             const liveEl = document.getElementById('ov-live-jobs');
@@ -879,6 +1009,7 @@
             });
             localStorage.setItem('settingsPanel', panelId);
             if (panelId === 'api' && typeof loadApiKeys === 'function') loadApiKeys();
+            if (panelId === 'engine' && typeof syncSettingsCbtUi === 'function') syncSettingsCbtUi();
         }
 
         function initSetupWizardTriggers() {
@@ -1281,8 +1412,46 @@
         }
 
         window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const settingsPanel = params.get('panel');
             const activeTab = getInitialTabId();
-            if (document.getElementById(activeTab)) { switchTab(activeTab); }
+            const switchOpts = (activeTab === 'tab-settings' && settingsPanel)
+                ? { settingsPanel }
+                : undefined;
+            if (document.getElementById(activeTab)) { switchTab(activeTab, switchOpts); }
+
+            if (params.get('profile_saved')) {
+                switchTab('tab-settings', { settingsPanel: 'profile' });
+                document.getElementById('profile-saved-msg')?.classList.remove('hidden');
+            }
+            if (params.get('purge_started')) {
+                switchTab('tab-settings', { settingsPanel: 'maintenance' });
+                document.getElementById('purge-started-msg')?.classList.remove('hidden');
+            }
+            const hostErr = params.get('error');
+            if (hostErr && (settingsPanel === 'hosts' || activeTab === 'tab-settings')) {
+                switchTab('tab-settings', { settingsPanel: 'hosts' });
+                showHostsPanelMessage(decodeURIComponent(hostErr), 'error');
+            } else if (params.get('host_ok') === '1' && settingsPanel === 'hosts') {
+                switchTab('tab-settings', { settingsPanel: 'hosts' });
+                const hostName = decodeURIComponent(params.get('host_name') || '');
+                const vddkInstalled = params.get('vddk_ok') === '1';
+                const vddkMessage = decodeURIComponent(params.get('vddk_msg') || '');
+                showHostsPanelMessage(
+                    vddkInstalled
+                        ? `${hostName || 'Host'} saved. VDDK is ready for live backups.`
+                        : `${hostName || 'Host'} saved. VDDK auto-install did not complete — see details.`,
+                    vddkInstalled ? 'success' : 'error'
+                );
+                setTimeout(() => showHostAddResultModal(hostName, vddkInstalled, vddkMessage), 150);
+            } else if (params.get('host_removed') === '1' && settingsPanel === 'hosts') {
+                switchTab('tab-settings', { settingsPanel: 'hosts' });
+                showHostsPanelMessage('Host removed.', 'success');
+            }
+
+            if (params.get('tab') || params.get('panel') || params.get('error') || params.get('profile_saved') || params.get('purge_started') || params.get('host_ok') || params.get('host_removed') || params.get('vddk_msg')) {
+                window.history.replaceState({}, '', window.location.pathname);
+            }
             
             const savedTheme = localStorage.getItem('userTheme') || 'light';
             applyTheme(savedTheme);
@@ -1293,6 +1462,7 @@
             initConfirmForms();
             initSetupWizardTriggers();
             updateSchedulerPauseUi();
+            if (typeof syncSettingsCbtUi === 'function') syncSettingsCbtUi();
 
             document.getElementById('appModalCancel')?.addEventListener('click', () => closeAppModal(false));
             document.getElementById('appModalConfirm')?.addEventListener('click', () => closeAppModal(true));
@@ -1518,8 +1688,11 @@
 
         <!-- JOBS TAB -->
         <div id="tab-jobs" class="tab-content hidden">
-            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 space-y-4 md:space-y-0">
-                <h2 class="text-2xl font-bold">Backup Tasks</h2>
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 space-y-4 md:space-y-0 gap-4">
+                <div class="flex flex-wrap items-center gap-3">
+                    <h2 class="text-2xl font-bold">Backup Tasks</h2>
+                    <button type="button" id="jobsPauseToggle" onclick="toggleJobsPause()" class="btn-secondary px-3 py-1.5 text-xs font-semibold whitespace-nowrap">Pause all</button>
+                </div>
                 
                 <div class="flex space-x-4 w-full md:w-auto">
                     <div class="relative flex-grow md:w-64">
@@ -1539,7 +1712,6 @@
                         <button type="button" id="jobsViewList" onclick="setJobsView('list')" class="jobs-view-btn active rounded-none">List</button>
                         <button type="button" id="jobsViewCards" onclick="setJobsView('cards')" class="jobs-view-btn rounded-none border-l" style="border-color: var(--border-color)">Cards</button>
                     </div>
-                    <button type="button" id="jobsPauseToggle" onclick="toggleJobsPause()" class="btn-secondary px-3 py-2 text-xs font-semibold whitespace-nowrap">Pause all</button>
                 </div>
             </div>
 
@@ -1623,7 +1795,7 @@
                                     <span id="list-prog-idle-{{ vm.id }}" class="text-xs" style="color: var(--text-muted)">{% if not vm.current_action %}—{% endif %}</span>
                                 </td>
                                 <td class="text-xs font-mono whitespace-nowrap" style="color: var(--text-muted)">{{ vm.last_backup.strftime('%Y-%m-%d %H:%M') if vm.last_backup else 'Never' }}</td>
-                                <td class="text-xs whitespace-nowrap">{{ (vm.schedule_frequency or 'daily')|title }} {{ '%02d'|format(vm.schedule_hour) }}:{{ '%02d'|format(vm.schedule_minute) }} · keep {{ vm.retention_count }}</td>
+                                <td class="text-xs whitespace-nowrap">{{ (vm.schedule_frequency or 'daily')|title }} {{ '%02d'|format(vm.schedule_hour) }}:{{ '%02d'|format(vm.schedule_minute) }} · keep {{ vm.retention_count }}{% if vm.cbt_enabled is not defined or vm.cbt_enabled %} · CBT{% else %} · full{% endif %}</td>
                                 <td class="text-right whitespace-nowrap actions-cell">
                                     <div class="inline-flex gap-1 items-center justify-end">
                                         <button type="button" id="list-form-stop-{{ vm.id }}" onclick="stopVmJob({{ vm.id }})" class="hidden btn-danger p-1.5 rounded" title="Abort">
@@ -1635,17 +1807,16 @@
                                         </form>
                                         <div class="relative job-actions-wrap" id="job-actions-wrap-{{ vm.id }}">
                                             <button type="button" onclick="toggleJobActionsMenu({{ vm.id }})" class="btn-secondary p-1.5 rounded" title="Schedule settings" aria-label="Schedule settings">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                             </button>
                                             <div id="job-actions-menu-{{ vm.id }}" class="job-actions-menu hidden">
                                                 <div class="job-actions-menu-header">Schedule</div>
                                                 {% include 'partials/job_schedule_form_popover.html' %}
-                                                <button type="button" onclick="removeVmFromTasks({{ vm.id }}, {{ vm.vm_name|tojson }})" class="w-full mt-2 btn-secondary px-3 py-1.5 text-xs font-medium hover:text-red-400 hover:border-red-400/50 flex items-center justify-center gap-1.5">
-                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                                    Remove from tasks
-                                                </button>
                                             </div>
                                         </div>
+                                        <button type="button" class="job-remove-btn btn-secondary p-1.5 rounded hover:text-red-400 hover:border-red-400/50" title="Remove from tasks" data-vm-id="{{ vm.id }}" data-vm-name="{{ vm.vm_name|e }}">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        </button>
                                     </div>
                                 </td>
                             </tr>
@@ -1690,7 +1861,7 @@
                                         Run Now
                                     </button>
                                 </form>
-                                <button type="button" onclick="removeVmFromTasks({{ vm.id }}, {{ vm.vm_name|tojson }})" class="btn-secondary p-1.5 rounded hover:text-red-400 hover:border-red-400/50" title="Remove from tasks">
+                                <button type="button" class="job-remove-btn btn-secondary p-1.5 rounded hover:text-red-400 hover:border-red-400/50" title="Remove from tasks" data-vm-id="{{ vm.id }}" data-vm-name="{{ vm.vm_name|e }}">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                 </button>
                             </div>
@@ -1781,7 +1952,7 @@
                     <select name="esxi_host_id" required class="py-2 px-3 text-sm rounded">
                         <option value="" disabled selected>Select Hypervisor...</option>
                         {% for host in esxi_hosts %}
-                        <option value="{{ host.id }}">{{ host.name }} ({{ host.host_ip }})</option>
+                        <option value="{{ host.id }}">{{ host.name }} ({{ host.host_ip }}){% if host.connection_type == 'vcenter' %} · vCenter{% elif host.connection_type == 'standalone' %} · ESXi{% endif %}</option>
                         {% endfor %}
                     </select>
                     <button type="submit" class="btn-primary px-4 py-2 text-sm font-medium">Scan</button>
@@ -2033,6 +2204,18 @@
             throw e;
         }
     }
+    window.removeVmFromTasks = removeVmFromTasks;
+
+    document.addEventListener('click', e => {
+        const removeBtn = e.target.closest('.job-remove-btn');
+        if (!removeBtn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const vmId = parseInt(removeBtn.dataset.vmId, 10);
+        const vmName = removeBtn.dataset.vmName || 'VM';
+        removeVmFromTasks(vmId, vmName);
+        if (typeof closeAllJobActionsMenus === 'function') closeAllJobActionsMenus();
+    });
 
     // ─── API Access Tokens (Settings) ─────────────────────────────────────────
     function formatApiKeyDate(iso) {
@@ -2153,6 +2336,31 @@
         document.querySelectorAll('.storage-fields').forEach(el => el.classList.add('hidden'));
         const target = document.getElementById('fields-' + type);
         if (target) target.classList.remove('hidden');
+        syncSettingsCbtUi();
+    }
+
+    function syncSettingsCbtUi() {
+        const storageType = document.querySelector('input[name="storage_type"]:checked')?.value || 'NFS';
+        const isS3 = storageType === 'S3';
+        const note = document.getElementById('settings-cbt-s3-note');
+        const cb = document.getElementById('settings-cbt-enabled');
+        if (note) note.classList.toggle('hidden', !isS3);
+        if (cb) {
+            cb.disabled = isS3;
+            if (isS3) cb.checked = false;
+        }
+    }
+
+    function syncWizardCbtUi() {
+        const type = document.querySelector('input[name="wizard_storage_type"]:checked')?.value || 'NFS';
+        const isS3 = type === 'S3';
+        const note = document.getElementById('wizard-cbt-s3-note');
+        const cb = document.getElementById('wizard-cbt-enabled');
+        if (note) note.classList.toggle('hidden', !isS3);
+        if (cb) {
+            cb.disabled = isS3;
+            if (isS3) cb.checked = false;
+        }
     }
     function buildSubsList() {
         // Collect checked event keys into the hidden comma-separated input
@@ -2283,6 +2491,39 @@
         getJobForms(vmId).forEach(updatePowerModeLabelForForm);
     }
 
+    function updateCbtLabelForForm(form) {
+        const cb = form.querySelector('input[name="cbt_enabled"]');
+        const el = form.querySelector('.job-cbt-label');
+        if (!cb || !el) return;
+        const inline = form.classList.contains('job-schedule-inline');
+        if (cb.checked) {
+            el.textContent = inline ? 'Incremental' : 'Incremental — delta after first full';
+            el.className = inline
+                ? 'job-cbt-label text-xs font-medium whitespace-nowrap text-[var(--brand)]'
+                : 'job-cbt-label text-[10px] font-medium leading-tight text-[var(--brand)]';
+        } else {
+            el.textContent = inline ? 'Full only' : 'Full only — no incrementals';
+            el.className = inline
+                ? 'job-cbt-label text-xs font-medium whitespace-nowrap opacity-60'
+                : 'job-cbt-label text-[10px] font-medium leading-tight opacity-60';
+        }
+    }
+
+    function updateCbtLabel(vmId) {
+        getJobForms(vmId).forEach(updateCbtLabelForForm);
+    }
+
+    function backupPointTypeBadge(pointType) {
+        const labels = {
+            full: { text: 'Full', cls: 'bg-blue-500/15 text-blue-300' },
+            incremental: { text: 'Incremental', cls: 'bg-emerald-500/15 text-emerald-300' },
+            synthetic_full: { text: 'Synthetic full', cls: 'bg-violet-500/15 text-violet-300' },
+            legacy: { text: 'Legacy full', cls: 'bg-gray-500/15 text-gray-300' },
+        };
+        const info = labels[pointType] || labels.full;
+        return `<span class="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${info.cls}">${info.text}</span>`;
+    }
+
     function applyDaysRowVisibility(form) {
         if (!form) return;
         const freq = getJobScheduleFrequency(form);
@@ -2319,6 +2560,7 @@
             seen.add(vmId);
             showDaysRow(vmId);
             updatePowerModeLabel(vmId);
+            updateCbtLabel(vmId);
         });
     });
 
@@ -2384,26 +2626,31 @@
         versionSection.classList.remove('hidden');
 
         versionList.innerHTML = group.versions.map((v, idx) => `
-            <button type="button" onclick="selectVersion('${v.path.replace(/\\/g, '\\\\').replace(/'/g,"\\'")}', '${v.date}', '${v.size}')"
+            <button type="button" onclick="selectVersion('${v.path.replace(/\\/g, '\\\\').replace(/'/g,"\\'")}', '${v.date}', '${v.size}', '${v.point_type || 'full'}')"
                     id="vcard-${idx}"
                     class="version-card w-full text-left rounded border px-3 py-2 transition-all hover:border-blue-500 hover:bg-blue-500/10"
                     style="border-color: var(--border-color)">
-                <div class="flex justify-between items-center">
-                    <div class="font-mono font-semibold text-xs" style="color: var(--brand)">${v.date}</div>
-                    <div class="text-[10px] opacity-60 font-mono">${v.size}</div>
+                <div class="flex justify-between items-center gap-2">
+                    <div class="font-mono font-semibold text-xs truncate" style="color: var(--brand)">${v.date}</div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        ${backupPointTypeBadge(v.point_type || (v.backup_type === 'legacy' ? 'legacy' : 'full'))}
+                        <div class="text-[10px] opacity-60 font-mono">${v.size}</div>
+                    </div>
                 </div>
             </button>`).join('');
 
         // Auto-select latest (first) version
         if (group.versions.length > 0) {
-            selectVersion(group.versions[0].path, group.versions[0].date, group.versions[0].size);
+            const v0 = group.versions[0];
+            selectVersion(v0.path, v0.date, v0.size, v0.point_type || 'full');
             document.getElementById('vcard-0')?.classList.add('border-blue-500', 'bg-blue-500/10');
         }
     }
 
-    function selectVersion(path, date, size) {
+    function selectVersion(path, date, size, pointType) {
         document.getElementById('selectedOvaPath').value = path;
-        document.getElementById('selectedVersionLabel').textContent = `${date}  •  ${size}  •  ${path}`;
+        const typeLabel = (pointType || 'full').replace('_', ' ');
+        document.getElementById('selectedVersionLabel').textContent = `${date}  •  ${typeLabel}  •  ${size}  •  ${path}`;
         // Highlight selected card
         document.querySelectorAll('.version-card').forEach(el => {
             el.classList.remove('border-blue-500', 'bg-blue-500/10');
@@ -2589,26 +2836,11 @@
             }
         }
 
-        if (params.get('tab') || pwOk || pwErr || params.get('new_user') || params.get('reset_user') || params.get('user_ok') || params.get('user_error')) {
+        if (pwOk || pwErr || params.get('new_user') || params.get('reset_user') || params.get('user_ok') || params.get('user_error')) {
             window.history.replaceState({}, '', window.location.pathname);
         }
 
-        // Profile saved feedback
-        if (params.get('profile_saved')) {
-            switchTab('tab-settings');
-            if (typeof showSettingsPanel === 'function') showSettingsPanel('profile');
-            const msg = document.getElementById('profile-saved-msg');
-            if (msg) msg.classList.remove('hidden');
-            window.history.replaceState({}, '', window.location.pathname);
-        }
-
-        if (params.get('purge_started')) {
-            switchTab('tab-settings');
-            if (typeof showSettingsPanel === 'function') showSettingsPanel('maintenance');
-            const msg = document.getElementById('purge-started-msg');
-            if (msg) msg.classList.remove('hidden');
-            window.history.replaceState({}, '', window.location.pathname);
-        }
+        // profile_saved / purge_started / tab+panel handled on DOMContentLoaded
     })();
 
     // ─── Setup wizard ─────────────────────────────────────────────────────────
@@ -2672,7 +2904,10 @@
             nextBtn.classList.remove('hidden');
             nextBtn.textContent = step === 4 ? 'Apply & Finish' : (step === WIZARD_TOTAL_STEPS ? 'Go to Tasks' : 'Continue');
         }
-        if (step === 4) wizardShowDaysRow();
+        if (step === 4) {
+            wizardShowDaysRow();
+            syncWizardCbtUi();
+        }
     }
 
     function wizardGoToStep(n) {
@@ -2699,6 +2934,13 @@
             const existing = await wizardApi('GET', '/hosts');
             wizardState.hosts = existing;
         } catch (_) {}
+        try {
+            const cfg = await wizardApi('GET', '/config');
+            const cbtCb = document.getElementById('wizard-cbt-enabled');
+            const cbtIv = document.getElementById('wizard-cbt-interval');
+            if (cbtCb) cbtCb.checked = cfg.cbt_enabled !== false;
+            if (cbtIv) cbtIv.value = cfg.cbt_full_interval || 7;
+        } catch (_) {}
         wizardRefreshHostList();
         wizardInitStorageSelection();
         wizardShowDaysRow();
@@ -2719,6 +2961,7 @@
         document.querySelectorAll('.wizard-storage-fields').forEach(el => el.classList.add('hidden'));
         const target = document.getElementById('wizard-fields-' + type);
         if (target) target.classList.remove('hidden');
+        syncWizardCbtUi();
     }
 
     function wizardUpdateDaysHidden() {
@@ -2843,6 +3086,14 @@
         }
     }
 
+    function wizardHostConnectionLabel(h) {
+        if (h.connection_label) return h.connection_label;
+        const t = h.connection_type || 'auto';
+        if (t === 'vcenter') return 'vCenter';
+        if (t === 'standalone') return 'Standalone ESXi';
+        return 'Auto-detect';
+    }
+
     function wizardRefreshHostList() {
         const ul = document.getElementById('wizard-host-list');
         if (!ul) return;
@@ -2855,6 +3106,7 @@
                 <div>
                     <span class="font-medium block">${escapeHtml(h.name)}</span>
                     <span class="text-xs font-mono" style="color:var(--brand)">${escapeHtml(h.host_ip)}</span>
+                    <span class="text-xs block mt-0.5" style="color:var(--text-muted)">${escapeHtml(wizardHostConnectionLabel(h))}</span>
                 </div>
                 <button type="button" onclick="wizardDeleteHost(${h.id})" class="text-gray-500 hover:text-red-400 transition-colors flex-shrink-0" title="Remove host">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
@@ -2884,15 +3136,17 @@
         const host_ip = document.getElementById('wizard-host-ip')?.value?.trim();
         const username = document.getElementById('wizard-host-user')?.value?.trim();
         const password = document.getElementById('wizard-host-pass')?.value || '';
+        const connection_type = document.getElementById('wizard-host-type')?.value || 'auto';
         if (!name || !host_ip || !username || !password) {
             wizardShowError('Fill in alias, host, username, and password.');
             return;
         }
         try {
-            const host = await wizardApi('POST', '/hosts', { name, host_ip, username, password });
+            const host = await wizardApi('POST', '/hosts', { name, host_ip, username, password, connection_type });
             if (!wizardState.hosts.some(h => h.id === host.id)) wizardState.hosts.push(host);
             wizardRefreshHostList();
             document.getElementById('wizard-host-pass').value = '';
+            showHostAddResultModal(host.name, !!host.vddk_installed, host.vddk_message || '');
         } catch (e) {
             wizardShowError(e.message);
         }
@@ -2979,6 +3233,11 @@
         const hostHour = {};
         hostIds.forEach((hid, i) => { hostHour[hid] = (hour + (stagger ? i : 0)) % 24; });
 
+        const storageType = document.querySelector('input[name="wizard_storage_type"]:checked')?.value || 'NFS';
+        const cbtEnabled = storageType !== 'S3' && (document.getElementById('wizard-cbt-enabled')?.checked ?? true);
+        const cbtInterval = parseInt(document.getElementById('wizard-cbt-interval')?.value || '7', 10);
+        await wizardApi('PUT', '/config', { cbt_enabled: cbtEnabled, cbt_full_interval: cbtInterval });
+
         let updated = 0;
         for (const v of wizardState.vms) {
             const body = v._selected ? {
@@ -2990,6 +3249,7 @@
                 schedule_frequency: frequency,
                 schedule_days: scheduleDays,
                 power_off_for_backup: false,
+                cbt_enabled: cbtEnabled,
             } : { is_selected: false, is_job_active: false };
             await wizardApi('PATCH', `/vms/${v.id}`, body);
             if (v._selected) updated++;
@@ -2999,7 +3259,7 @@
         if (summary) {
             summary.innerHTML = `
                 <p><strong>${updated}</strong> VM(s) scheduled (${frequency})${jobActive ? '' : ' — inactive until enabled'}.</p>
-                <p class="mt-1 opacity-80">${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} UTC${stagger && hostIds.length > 1 ? ' · staggered by host' : ''} · Keep ${retention}</p>`;
+                <p class="mt-1 opacity-80">${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} UTC${stagger && hostIds.length > 1 ? ' · staggered by host' : ''} · Keep ${retention}${cbtEnabled ? ' · CBT incremental' : ' · Full backups only'}</p>`;
         }
         localStorage.setItem('setup_wizard_done', '1');
     }

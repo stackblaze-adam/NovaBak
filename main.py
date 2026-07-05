@@ -1,6 +1,7 @@
 import os
 import sys
 import uvicorn
+from urllib.parse import quote
 from fastapi import FastAPI, Depends, Request, Form, status, HTTPException
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -326,6 +327,12 @@ def save_config(
     datastore_min_free_pct: int = Form(15),
     datastore_headroom_gb: int = Form(10),
     datastore_est_multiplier: float = Form(2.0),
+    backup_transport: str = Form("nbd"),
+    repo_min_free_gb: int = Form(50),
+    exclude_infra_vms: bool = Form(True),
+    vddk_libdir: str = Form("/opt/vmware-vix-disklib-distrib"),
+    cbt_enabled: bool = Form(False),
+    cbt_full_interval: int = Form(7),
 
     storage_type: str = Form("SMB"),
     nfs_path: str = Form(""),
@@ -369,6 +376,13 @@ def save_config(
     config.datastore_min_free_pct = max(5, min(50, datastore_min_free_pct))
     config.datastore_headroom_gb = max(0, min(500, datastore_headroom_gb))
     config.datastore_est_multiplier = max(1.0, min(3.0, float(datastore_est_multiplier)))
+    transport = (backup_transport or "nbd").lower()
+    config.backup_transport = transport if transport in ("legacy", "nbd", "nfc") else "nbd"
+    config.repo_min_free_gb = max(1, min(10000, repo_min_free_gb))
+    config.exclude_infra_vms = exclude_infra_vms
+    config.vddk_libdir = vddk_libdir.strip() or "/opt/vmware-vix-disklib-distrib"
+    config.cbt_enabled = cbt_enabled
+    config.cbt_full_interval = max(1, min(60, cbt_full_interval))
     
     config.storage_type = storage_type
     config.nfs_path = nfs_path
@@ -397,13 +411,26 @@ def add_esxi_host(
     host_ip: str = Form(...),
     username: str = Form(...),
     password: str = Form(""),
+    connection_type: str = Form("auto"),
     db: Session = Depends(get_db)
 ):
     require_auth(request)
-    new_host = ESXiHost(name=name, host_ip=host_ip, username=username, password=password)
-    db.add(new_host)
-    db.commit()
-    return RedirectResponse(url="/", status_code=303)
+    try:
+        host = backup_ops.add_esxi_host(db, name, host_ip, username, password, connection_type)
+    except ValueError as e:
+        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={quote(str(e))}", status_code=303)
+    except ConnectionError as e:
+        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={quote(str(e))}", status_code=303)
+    except Exception as e:
+        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={quote(str(e))}", status_code=303)
+    bootstrap = getattr(host, "_vddk_bootstrap", None) or {}
+    vddk_ok = "1" if bootstrap.get("vddk_installed") else "0"
+    vddk_msg = quote(bootstrap.get("vddk_message") or "", safe="")
+    host_name = quote(host.name or name, safe="")
+    return RedirectResponse(
+        url=f"/?tab=settings&panel=hosts&host_ok=1&host_name={host_name}&vddk_ok={vddk_ok}&vddk_msg={vddk_msg}",
+        status_code=303,
+    )
 
 @app.post("/delete_esxi_host")
 def delete_esxi_host(request: Request, host_id: int = Form(...), db: Session = Depends(get_db)):
@@ -412,9 +439,7 @@ def delete_esxi_host(request: Request, host_id: int = Form(...), db: Session = D
     if host:
         db.delete(host)
         db.commit()
-    return RedirectResponse(url="/", status_code=303)
-
-@app.post("/fetch_vms")
+    return RedirectResponse(url="/?tab=settings&panel=hosts&host_removed=1", status_code=303)
 def fetch_vms(request: Request, esxi_host_id: int = Form(...), db: Session = Depends(get_db)):
     try:
         require_auth(request)
@@ -474,6 +499,7 @@ def update_job(
     retention_count: int = Form(2),
     is_job_active: bool = Form(False),
     power_off_for_backup: bool = Form(False),
+    cbt_enabled: bool = Form(False),
     schedule_frequency: str = Form("daily"),
     schedule_days: str = Form("0,1,2,3,4,5,6"),
     db: Session = Depends(get_db)
@@ -486,6 +512,7 @@ def update_job(
         vm.retention_count = retention_count
         vm.is_job_active = is_job_active
         vm.power_off_for_backup = power_off_for_backup
+        vm.cbt_enabled = cbt_enabled
         vm.schedule_frequency = schedule_frequency if schedule_frequency in ("daily", "weekly", "monthly") else "daily"
         valid_days = [d.strip() for d in schedule_days.split(',') if d.strip().isdigit() and 0 <= int(d.strip()) <= 6]
         vm.schedule_days = ','.join(valid_days) if valid_days else "0,1,2,3,4,5,6"

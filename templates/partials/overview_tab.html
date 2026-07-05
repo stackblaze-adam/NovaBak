@@ -57,28 +57,34 @@
                 <span id="ov-storage-type" class="overview-chip">—</span>
             </div>
             <div class="overview-panel-body">
-                <div id="ov-storage-path" class="text-xs font-mono mb-4 truncate" style="color: var(--text-muted)" title="">—</div>
-
-                <div class="mb-4">
-                    <div class="flex justify-between text-xs mb-1.5">
-                        <span style="color: var(--text-muted)">Backup repository</span>
-                        <span id="ov-storage-used-label" class="font-semibold">—</span>
-                    </div>
-                    <div id="ov-storage-bar-wrap" class="overview-bar-track hidden">
-                        <div id="ov-storage-bar" class="overview-bar-fill" style="width: 0%"></div>
-                    </div>
-                    <div id="ov-storage-meta" class="text-[11px] mt-1.5" style="color: var(--text-muted)">—</div>
+                <div id="ov-storage-path-line" class="overview-storage-path-line text-xs truncate" title="">
+                    <span style="color: var(--text-muted)">Backup path on NovaBak server</span>
+                    <span class="overview-path-sep" style="color: var(--text-muted)">·</span>
+                    <span id="ov-storage-path" class="font-mono" style="color: var(--brand)">—</span>
                 </div>
 
-                <div id="ov-disk-section" class="hidden pt-3 border-t" style="border-color: var(--border-color)">
-                    <div class="flex justify-between text-xs mb-1.5">
-                        <span style="color: var(--text-muted)">Target disk free</span>
-                        <span id="ov-disk-free-label" class="font-semibold">—</span>
+                <div id="ov-storage-disk" class="overview-storage-disk hidden">
+                    <div class="overview-donut-wrap">
+                        <div class="overview-ring overview-ring-lg">
+                            <svg viewBox="0 0 36 36" class="overview-ring-svg" aria-hidden="true">
+                                <circle class="overview-ring-bg" cx="18" cy="18" r="15.9155"></circle>
+                                <circle id="ov-disk-seg-free" class="overview-ring-seg ring-free" cx="18" cy="18" r="15.9155" pathLength="100"></circle>
+                                <circle id="ov-disk-seg-backup" class="overview-ring-seg ring-backup" cx="18" cy="18" r="15.9155" pathLength="100"></circle>
+                                <circle id="ov-disk-seg-used" class="overview-ring-seg ring-used" cx="18" cy="18" r="15.9155" pathLength="100"></circle>
+                            </svg>
+                            <div class="overview-ring-center">
+                                <div id="ov-disk-center-main" class="overview-ring-value">—</div>
+                                <div id="ov-disk-center-sub" class="overview-ring-pct">—</div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="overview-bar-track">
-                        <div id="ov-disk-bar" class="overview-bar-fill overview-bar-disk" style="width: 0%"></div>
-                    </div>
-                    <div id="ov-disk-meta" class="text-[11px] mt-1.5" style="color: var(--text-muted)">—</div>
+                    <p class="overview-donut-legend-line">
+                        <span class="overview-legend-item"><span class="overview-legend-swatch ring-free"></span>Free <strong id="ov-legend-free">—</strong></span>
+                        <span id="ov-legend-used-sep" class="overview-legend-sep">·</span>
+                        <span id="ov-legend-used-wrap" class="overview-legend-item"><span class="overview-legend-swatch ring-used"></span>Used <strong id="ov-legend-used">—</strong></span>
+                        <span class="overview-legend-sep">·</span>
+                        <span class="overview-legend-item"><span class="overview-legend-swatch ring-backup"></span>Backups <strong id="ov-legend-backup">—</strong></span>
+                    </p>
                 </div>
 
                 <div id="ov-storage-error" class="hidden mt-3 text-xs text-red-400"></div>
@@ -96,7 +102,7 @@
                 <div class="mt-4 pt-3 border-t grid grid-cols-2 gap-2 text-center" style="border-color: var(--border-color)">
                     <div>
                         <div id="ov-hosts" class="text-lg font-bold">—</div>
-                        <div class="text-[10px] uppercase tracking-wide" style="color: var(--text-muted)">ESXi hosts</div>
+                        <div id="ov-hosts-label" class="text-[10px] uppercase tracking-wide" style="color: var(--text-muted)">Registered hosts</div>
                     </div>
                     <div>
                         <div id="ov-inventory" class="text-lg font-bold">—</div>

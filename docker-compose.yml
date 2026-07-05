@@ -13,6 +13,7 @@ services:
       # Persistent data: SQLite DB + logs
       - novabak_data:/app/data
       - /mnt/backups:/mnt/backups
+      - /opt/NovaBak/vendor/vddk:/app/vendor/vddk:ro
     environment:
       - DATA_DIR=/app/data
       - LOG_FILE=service.log
@@ -29,6 +30,8 @@ services:
       # Same data volume — shared DB between web and worker
       - novabak_data:/app/data
       - /mnt/backups:/mnt/backups
+      # VDDK tarball + extracted lib (see services/vddk_install.py)
+      - /opt/NovaBak/vendor/vddk:/app/vendor/vddk:ro
     environment:
       - DATA_DIR=/app/data
       - LOG_FILE=worker.log

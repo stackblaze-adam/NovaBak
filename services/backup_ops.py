@@ -8,6 +8,7 @@ import time
 import esxi_handler
 import worker
 import storage_util
+import vsphere_context
 from config_env import DATA_DIR
 from models import Config, VM, ESXiHost, BackupLog, RestoreJob
 
@@ -42,6 +43,12 @@ def config_to_dict(config):
         "datastore_min_free_pct": config.datastore_min_free_pct,
         "datastore_headroom_gb": config.datastore_headroom_gb,
         "datastore_est_multiplier": config.datastore_est_multiplier,
+        "backup_transport": getattr(config, "backup_transport", "nbd") or "nbd",
+        "repo_min_free_gb": getattr(config, "repo_min_free_gb", 50),
+        "exclude_infra_vms": getattr(config, "exclude_infra_vms", True),
+        "vddk_libdir": getattr(config, "vddk_libdir", None) or "",
+        "cbt_enabled": getattr(config, "cbt_enabled", True),
+        "cbt_full_interval": getattr(config, "cbt_full_interval", 7),
         "smtp_server": config.smtp_server,
         "smtp_port": config.smtp_port,
         "smtp_user": config.smtp_user,
@@ -93,6 +100,20 @@ def update_storage_config(db, data):
         config.datastore_headroom_gb = data["datastore_headroom_gb"]
     if "datastore_est_multiplier" in data and data["datastore_est_multiplier"] is not None:
         config.datastore_est_multiplier = data["datastore_est_multiplier"]
+    if "backup_transport" in data and data["backup_transport"] is not None:
+        t = str(data["backup_transport"]).lower()
+        if t in ("legacy", "nbd", "nfc"):
+            config.backup_transport = t
+    if "repo_min_free_gb" in data and data["repo_min_free_gb"] is not None:
+        config.repo_min_free_gb = max(1, min(10000, int(data["repo_min_free_gb"])))
+    if "exclude_infra_vms" in data and data["exclude_infra_vms"] is not None:
+        config.exclude_infra_vms = bool(data["exclude_infra_vms"])
+    if "vddk_libdir" in data and data["vddk_libdir"] is not None:
+        config.vddk_libdir = data["vddk_libdir"]
+    if "cbt_enabled" in data and data["cbt_enabled"] is not None:
+        config.cbt_enabled = bool(data["cbt_enabled"])
+    if "cbt_full_interval" in data and data["cbt_full_interval"] is not None:
+        config.cbt_full_interval = max(1, min(60, int(data["cbt_full_interval"])))
     db.commit()
     db.refresh(config)
     return config
@@ -169,25 +190,67 @@ def test_storage(db):
 
 
 def host_to_dict(host, include_secrets=False):
+    conn = getattr(host, "connection_type", None) or vsphere_context.CONN_AUTO
     data = {
         "id": host.id,
         "name": host.name,
         "host_ip": host.host_ip,
         "username": host.username,
+        "connection_type": conn,
+        "connection_label": vsphere_context.connection_label(
+            conn if conn != vsphere_context.CONN_AUTO else vsphere_context.CONN_STANDALONE
+        ) if conn != vsphere_context.CONN_AUTO else "Auto-detect",
     }
+    bootstrap = getattr(host, "_vddk_bootstrap", None)
+    if bootstrap:
+        data["vddk_installed"] = bootstrap.get("vddk_installed")
+        data["vddk_message"] = bootstrap.get("vddk_message")
     if include_secrets:
         data["password"] = host.password
     return data
 
 
-def add_esxi_host(db, name, host_ip, username, password):
+def add_esxi_host(db, name, host_ip, username, password, connection_type="auto"):
+    from logger_util import log_info, log_warn
+    import vsphere_context
+
     existing = db.query(ESXiHost).filter(ESXiHost.name == name).first()
     if existing:
         raise ValueError(f"Host '{name}' already exists")
-    host = ESXiHost(name=name, host_ip=host_ip, username=username, password=password)
+
+    si = esxi_handler.connect_esxi(host_ip, username, password)
+    if not si:
+        raise ConnectionError(f"Could not connect to host at {host_ip}")
+
+    detected = vsphere_context.detect_connection_type(si)
+    stored_type = connection_type or vsphere_context.CONN_AUTO
+    if stored_type == vsphere_context.CONN_AUTO:
+        stored_type = detected
+    elif stored_type != detected:
+        log_warn(
+            f"[HOST] connection_type={stored_type} differs from detected {detected}; "
+            f"using stored value for {name}"
+        )
+    log_info(
+        f"[HOST] Registered {name} ({host_ip}) as "
+        f"{vsphere_context.connection_label(stored_type)}"
+    )
+    esxi_handler.Disconnect(si)
+
+    from services.vddk_install import ensure_vddk_on_host_add
+    vddk_status = ensure_vddk_on_host_add(db)
+
+    host = ESXiHost(
+        name=name,
+        host_ip=host_ip,
+        username=username,
+        password=password,
+        connection_type=stored_type,
+    )
     db.add(host)
     db.commit()
     db.refresh(host)
+    host._vddk_bootstrap = vddk_status  # ephemeral, for API response
     return host
 
 
@@ -257,6 +320,7 @@ def vm_to_dict(vm):
         "current_action": vm.current_action,
         "power_state": vm.power_state,
         "power_off_for_backup": vm.power_off_for_backup,
+        "cbt_enabled": getattr(vm, "cbt_enabled", True),
     }
 
 
@@ -266,7 +330,7 @@ def update_vm_job(db, vm_id, data):
         raise ValueError("VM not found")
     for field in (
         "is_selected", "schedule_hour", "schedule_minute", "retention_count",
-        "is_job_active", "power_off_for_backup", "schedule_frequency",
+        "is_job_active", "power_off_for_backup", "cbt_enabled", "schedule_frequency",
     ):
         if field in data and data[field] is not None:
             setattr(vm, field, data[field])
@@ -344,9 +408,13 @@ def list_backups_grouped(db):
     backups = worker.get_available_backups(config)
     grouped = {}
     for b in backups:
-        grouped.setdefault(b["vm_name"], []).append(
-            {"date": b["date"], "path": b["path"], "size": b["size"]}
-        )
+        grouped.setdefault(b["vm_name"], []).append({
+            "date": b.get("display_date") or b["date"],
+            "path": b["path"],
+            "size": b["size"],
+            "point_type": b.get("point_type", "legacy"),
+            "backup_type": b.get("backup_type", "legacy"),
+        })
     return [{"vm_name": vm, "versions": versions} for vm, versions in sorted(grouped.items())]
 
 
@@ -600,6 +668,20 @@ def _worker_health():
     return False, None
 
 
+def _overview_host_label(hosts):
+    """Footer label for registered vSphere endpoints."""
+    if not hosts:
+        return "Registered hosts"
+    types = [getattr(h, "connection_type", None) or "auto" for h in hosts]
+    vcenter = sum(1 for t in types if t == "vcenter")
+    standalone = sum(1 for t in types if t == "standalone")
+    if vcenter and not standalone:
+        return "vCenter" if vcenter == 1 else "vCenters"
+    if standalone and not vcenter:
+        return "ESXi host" if standalone == 1 else "ESXi hosts"
+    return "Registered hosts"
+
+
 def get_overview(db):
     config = get_or_create_config(db)
     vms = db.query(VM).all()
@@ -692,6 +774,7 @@ def get_overview(db):
         "scheduled_count": sum(1 for v in selected if v.is_job_active),
         "running_count": len(live_jobs),
         "host_count": len(esxi_hosts),
+        "host_label": _overview_host_label(esxi_hosts),
         "inventory_count": len(vms),
         "status_counts": status_counts,
         "log_stats_7d": log_stats_7d,

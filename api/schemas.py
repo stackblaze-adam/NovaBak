@@ -57,6 +57,12 @@ class StorageConfigUpdate(BaseModel):
     datastore_min_free_pct: Optional[int] = None
     datastore_headroom_gb: Optional[int] = None
     datastore_est_multiplier: Optional[float] = None
+    backup_transport: Optional[str] = None
+    repo_min_free_gb: Optional[int] = None
+    exclude_infra_vms: Optional[bool] = None
+    vddk_libdir: Optional[str] = None
+    cbt_enabled: Optional[bool] = None
+    cbt_full_interval: Optional[int] = None
 
 
 class ConfigResponse(BaseModel):
@@ -75,6 +81,12 @@ class ConfigResponse(BaseModel):
     datastore_min_free_pct: int
     datastore_headroom_gb: int
     datastore_est_multiplier: float
+    backup_transport: str
+    repo_min_free_gb: int
+    exclude_infra_vms: bool
+    vddk_libdir: str
+    cbt_enabled: bool = True
+    cbt_full_interval: int = 7
     smtp_server: str
     smtp_port: int
     smtp_user: str
@@ -106,6 +118,12 @@ class ConfigUpdate(BaseModel):
     datastore_min_free_pct: Optional[int] = None
     datastore_headroom_gb: Optional[int] = None
     datastore_est_multiplier: Optional[float] = None
+    backup_transport: Optional[str] = None
+    repo_min_free_gb: Optional[int] = None
+    exclude_infra_vms: Optional[bool] = None
+    vddk_libdir: Optional[str] = None
+    cbt_enabled: Optional[bool] = None
+    cbt_full_interval: Optional[int] = None
     smtp_server: Optional[str] = None
     smtp_port: Optional[int] = None
     smtp_user: Optional[str] = None
@@ -130,6 +148,7 @@ class ESXiHostCreate(BaseModel):
     host_ip: str
     username: str
     password: str
+    connection_type: Optional[str] = "auto"  # auto | standalone | vcenter
 
 
 class ESXiHostResponse(BaseModel):
@@ -137,6 +156,10 @@ class ESXiHostResponse(BaseModel):
     name: str
     host_ip: str
     username: str
+    connection_type: str = "auto"
+    connection_label: str = "Auto-detect"
+    vddk_installed: Optional[bool] = None
+    vddk_message: Optional[str] = None
 
 
 class VmUpdate(BaseModel):
@@ -146,6 +169,7 @@ class VmUpdate(BaseModel):
     retention_count: Optional[int] = None
     is_job_active: Optional[bool] = None
     power_off_for_backup: Optional[bool] = None
+    cbt_enabled: Optional[bool] = None
     schedule_frequency: Optional[str] = None
     schedule_days: Optional[str] = None
 
@@ -170,6 +194,7 @@ class VmResponse(BaseModel):
     current_action: str
     power_state: str
     power_off_for_backup: bool
+    cbt_enabled: bool = True
 
 
 class SyncResult(BaseModel):
@@ -285,6 +310,7 @@ class OverviewResponse(BaseModel):
     scheduled_count: int
     running_count: int
     host_count: int
+    host_label: str = "Registered hosts"
     inventory_count: int
     status_counts: dict
     log_stats_7d: dict

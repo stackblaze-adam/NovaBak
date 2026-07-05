@@ -9,6 +9,9 @@ from logger_util import log_info, log_warn, log_error
 # Disable strict SSL verification warnings for ESXi self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+import vsphere_context
+
+
 def connect_esxi(host, user, pwd):
     """
     Connects to the ESXi host and returns the service instance.
@@ -86,10 +89,13 @@ def get_datastores(si):
         
     return ds_list
 
+def _find_vm(si, vm_name):
+    return vsphere_context.find_vm_by_name(si, vm_name)
+
+
 def create_snapshot(si, vm_name):
     """ Creates a crash-consistent snapshot of a VM. Returns the task. """
-    content = si.RetrieveContent()
-    vm = content.searchIndex.FindByInventoryPath(f"ha-datacenter/vm/{vm_name}")
+    vm = _find_vm(si, vm_name)
     
     if not vm:
         print(f"VM {vm_name} not found for snapshot.")
@@ -121,7 +127,7 @@ def create_snapshot(si, vm_name):
 def remove_snapshot(si, vm_name, timeout_mins=60):
     """ Consolidates and removes all VMBACKUP_TEMP snapshots for a VM. """
     content = si.RetrieveContent()
-    vm = content.searchIndex.FindByInventoryPath(f"ha-datacenter/vm/{vm_name}")
+    vm = _find_vm(si, vm_name)
     
     if not vm or not vm.snapshot:
         return True
@@ -215,7 +221,7 @@ def wait_for_vm_idle(si, vm_name, timeout_mins=15):
 def disconnect_removable_devices(si, vm_name):
     """ Disconnects any ISO images from CD-ROM drives and Floppy drives before backup. """
     content = si.RetrieveContent()
-    vm = content.searchIndex.FindByInventoryPath(f"ha-datacenter/vm/{vm_name}")
+    vm = _find_vm(si, vm_name)
     
     if not vm:
         print(f"disconnect_removable_devices: VM {vm_name} not found.")
@@ -263,7 +269,7 @@ def disconnect_removable_devices(si, vm_name):
 def check_consolidation_needed(si, vm_name):
     """ Returns True if the VM requires disk consolidation. """
     content = si.RetrieveContent()
-    vm = content.searchIndex.FindByInventoryPath(f"ha-datacenter/vm/{vm_name}")
+    vm = _find_vm(si, vm_name)
     if vm and hasattr(vm.runtime, 'consolidationNeeded'):
         return vm.runtime.consolidationNeeded
     return False
@@ -271,7 +277,7 @@ def check_consolidation_needed(si, vm_name):
 def cleanup_ghost_tasks(si, vm_name, timeout_mins=60):
     """ Finds any existing 'exportVm' tasks for this VM and cancels them if they are too old. """
     content = si.RetrieveContent()
-    vm = content.searchIndex.FindByInventoryPath(f"ha-datacenter/vm/{vm_name}")
+    vm = _find_vm(si, vm_name)
     if not vm:
         return
         
@@ -296,7 +302,7 @@ def shutdown_vm(si, vm_name, graceful_timeout_mins=5):
     """
     import time
     content = si.RetrieveContent()
-    vm = content.searchIndex.FindByInventoryPath(f"ha-datacenter/vm/{vm_name}")
+    vm = _find_vm(si, vm_name)
     if not vm:
         return False, f"VM {vm_name} not found"
 
@@ -333,7 +339,7 @@ def shutdown_vm(si, vm_name, graceful_timeout_mins=5):
         time.sleep(5)
         try:
             # Refresh VM state
-            vm = content.searchIndex.FindByInventoryPath(f"ha-datacenter/vm/{vm_name}")
+            vm = _find_vm(si, vm_name)
             if vm and vm.runtime.powerState == 'poweredOff':
                 log_info(f"[POWER] {vm_name} shut down gracefully.")
                 return True, "Graceful shutdown successful"
@@ -365,7 +371,7 @@ def poweron_vm(si, vm_name, timeout_mins=3):
     """
     import time
     content = si.RetrieveContent()
-    vm = content.searchIndex.FindByInventoryPath(f"ha-datacenter/vm/{vm_name}")
+    vm = _find_vm(si, vm_name)
     if not vm:
         return False, f"VM {vm_name} not found"
 
