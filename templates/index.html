@@ -274,47 +274,50 @@
         .overview-bar-fill.overview-bar-warn { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
         .overview-bar-fill.overview-bar-danger { background: linear-gradient(90deg, #ef4444, #f87171); }
         .overview-bar-disk { background: linear-gradient(90deg, #10b981, #34d399); }
-        .overview-storage-rings {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+        .overview-storage-disk {
             padding-top: 0.75rem; margin-top: 0.75rem;
             border-top: 1px solid var(--border-color);
         }
-        .overview-ring-wrap { text-align: center; min-width: 0; }
-        .overview-ring {
-            position: relative; width: 5.75rem; height: 5.75rem; margin: 0 auto 0.5rem;
+        .overview-donut-wrap { display: flex; justify-content: center; margin-bottom: 0.75rem; }
+        .overview-ring-lg { width: 7.5rem; height: 7.5rem; }
+        .overview-ring-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+        .overview-ring-bg { fill: none; stroke: var(--border-color); stroke-width: 3.2; }
+        .overview-ring-seg {
+            fill: none; stroke-width: 3.2; stroke-linecap: butt;
+            stroke-dasharray: 0 100; stroke-dashoffset: 0;
+            transition: stroke-dasharray 0.45s ease, stroke-dashoffset 0.45s ease;
         }
-        .overview-ring-svg {
-            width: 100%; height: 100%; transform: rotate(-90deg);
-        }
-        .overview-ring-bg {
-            fill: none; stroke: var(--border-color); stroke-width: 3;
-        }
-        .overview-ring-progress {
-            fill: none; stroke-width: 3; stroke-linecap: round;
-            stroke-dasharray: 100 100; stroke-dashoffset: 100;
-            transition: stroke-dashoffset 0.45s ease, stroke 0.2s ease;
-        }
-        .overview-ring-progress.ring-disk { stroke: #10b981; }
-        .overview-ring-progress.ring-backup { stroke: var(--brand); }
-        .overview-ring-progress.ring-warn { stroke: #f59e0b; }
-        .overview-ring-progress.ring-danger { stroke: #ef4444; }
+        .ring-free, .overview-legend-swatch.ring-free { background: #10b981; stroke: #10b981; }
+        .ring-used, .overview-legend-swatch.ring-used { background: #64748b; stroke: #64748b; }
+        .ring-backup, .overview-legend-swatch.ring-backup { background: var(--brand); stroke: var(--brand); }
+        .ring-warn.ring-free, .overview-legend-swatch.ring-warn { background: #f59e0b; stroke: #f59e0b; }
+        .ring-danger.ring-free, .overview-legend-swatch.ring-danger { background: #ef4444; stroke: #ef4444; }
         .overview-ring-center {
             position: absolute; inset: 0; display: flex; flex-direction: column;
-            align-items: center; justify-content: center; pointer-events: none;
+            align-items: center; justify-content: center; pointer-events: none; text-align: center;
+        }
+        .overview-ring {
+            position: relative; margin: 0 auto;
         }
         .overview-ring-value {
-            font-size: 0.8125rem; font-weight: 700; line-height: 1.1;
+            font-size: 0.875rem; font-weight: 700; line-height: 1.1;
             font-variant-numeric: tabular-nums;
         }
         .overview-ring-pct {
-            font-size: 0.625rem; font-weight: 600; margin-top: 0.1rem;
+            font-size: 0.625rem; font-weight: 600; margin-top: 0.15rem;
             color: var(--text-muted);
         }
-        .overview-ring-caption {
-            font-size: 0.6875rem; font-weight: 600; color: var(--text-muted);
+        .overview-donut-legend {
+            display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem 1rem;
+            font-size: 0.6875rem; color: var(--text-muted);
         }
+        .overview-legend-item { display: flex; align-items: center; gap: 0.35rem; }
+        .overview-legend-swatch {
+            width: 0.5rem; height: 0.5rem; border-radius: 9999px; flex-shrink: 0;
+        }
+        .overview-legend-item strong { color: var(--text-main); font-weight: 700; }
         .overview-ring-meta {
-            font-size: 0.625rem; margin-top: 0.25rem; line-height: 1.35;
+            font-size: 0.625rem; line-height: 1.35;
             color: var(--text-muted); opacity: 0.85;
         }
         .overview-status-row { display: flex; align-items: center; gap: 0.5rem; }
@@ -759,12 +762,12 @@
             }).join('');
         }
 
-        function setOverviewRing(circleEl, pct, toneClass) {
+        function setOverviewDonutSeg(circleEl, pct, offsetPct) {
             if (!circleEl) return;
             const p = Math.min(100, Math.max(0, pct));
-            circleEl.style.strokeDashoffset = String(100 - p);
-            circleEl.classList.remove('ring-disk', 'ring-backup', 'ring-warn', 'ring-danger');
-            if (toneClass) circleEl.classList.add(toneClass);
+            const rest = Math.max(0, 100 - p);
+            circleEl.style.strokeDasharray = `${p} ${rest}`;
+            circleEl.style.strokeDashoffset = String(-offsetPct);
         }
 
         function overviewRenderOverview(data) {
@@ -801,27 +804,37 @@
             }
             set('ov-storage-meta', `All backups written here on the NovaBak server (${st.type || 'storage'}).`);
 
-            const ringsSection = document.getElementById('ov-storage-rings');
+            const diskBlock = document.getElementById('ov-storage-disk');
             if (st.disk_total_gb != null && st.disk_free_gb != null) {
-                ringsSection?.classList.remove('hidden');
+                diskBlock?.classList.remove('hidden');
                 const freePct = st.disk_free_pct ?? 0;
+                const usedPct = Math.min(100, Math.max(0, 100 - freePct));
                 const backupGb = st.total_bytes ? (st.total_bytes / (1024 ** 3)) : 0;
                 const backupPct = st.disk_total_gb
-                    ? Math.min(100, Math.round(100 * backupGb / st.disk_total_gb))
+                    ? Math.min(usedPct, Math.round(100 * backupGb / st.disk_total_gb))
                     : 0;
+                const otherUsedPct = Math.max(0, usedPct - backupPct);
 
-                set('ov-disk-ring-value', `${st.disk_free_gb} GB`);
-                set('ov-disk-ring-pct', `${freePct}% free`);
-                set('ov-disk-ring-meta', `${st.disk_total_gb} GB volume`);
-                const diskVariant = freePct < 15 ? 'ring-danger' : (freePct < 25 ? 'ring-warn' : 'ring-disk');
-                setOverviewRing(document.getElementById('ov-disk-ring'), freePct, diskVariant);
+                const freeSeg = document.getElementById('ov-disk-seg-free');
+                const backupSeg = document.getElementById('ov-disk-seg-backup');
+                const usedSeg = document.getElementById('ov-disk-seg-used');
+                freeSeg?.classList.remove('ring-warn', 'ring-danger');
+                if (freePct < 15) freeSeg?.classList.add('ring-danger');
+                else if (freePct < 25) freeSeg?.classList.add('ring-warn');
 
-                set('ov-backup-ring-value', st.total_human || '—');
-                set('ov-backup-ring-pct', backupPct > 0 ? `${backupPct}% of disk used by backups` : 'No backups yet');
-                set('ov-backup-ring-meta', `${st.version_count ?? 0} saved snapshot(s) · ${st.vm_count ?? 0} VM(s)`);
-                setOverviewRing(document.getElementById('ov-backup-ring'), Math.max(backupPct, backupGb > 0 ? 2 : 0), 'ring-backup');
+                // One ring, clockwise from top: free → backups → other used
+                setOverviewDonutSeg(freeSeg, freePct, 0);
+                setOverviewDonutSeg(backupSeg, backupPct, freePct);
+                setOverviewDonutSeg(usedSeg, otherUsedPct, freePct + backupPct);
+
+                set('ov-disk-center-main', `${st.disk_free_gb} GB`);
+                set('ov-disk-center-sub', `${freePct}% free`);
+                set('ov-legend-free', `${st.disk_free_gb} GB (${freePct}%)`);
+                set('ov-legend-used', `${st.disk_used_gb} GB (${Math.round(usedPct)}%)`);
+                set('ov-legend-backup', st.total_human || '0 GB');
+                set('ov-disk-summary', `${st.disk_total_gb} GB disk · ${st.version_count ?? 0} backup(s) · ${st.vm_count ?? 0} VM(s)`);
             } else {
-                ringsSection?.classList.add('hidden');
+                diskBlock?.classList.add('hidden');
             }
 
             const errEl = document.getElementById('ov-storage-error');
