@@ -61,6 +61,8 @@ class StorageConfigUpdate(BaseModel):
     repo_min_free_gb: Optional[int] = None
     exclude_infra_vms: Optional[bool] = None
     vddk_libdir: Optional[str] = None
+    cbt_enabled: Optional[bool] = None
+    cbt_full_interval: Optional[int] = None
 
 
 class ConfigResponse(BaseModel):
@@ -83,6 +85,8 @@ class ConfigResponse(BaseModel):
     repo_min_free_gb: int
     exclude_infra_vms: bool
     vddk_libdir: str
+    cbt_enabled: bool = True
+    cbt_full_interval: int = 7
     smtp_server: str
     smtp_port: int
     smtp_user: str
@@ -118,6 +122,8 @@ class ConfigUpdate(BaseModel):
     repo_min_free_gb: Optional[int] = None
     exclude_infra_vms: Optional[bool] = None
     vddk_libdir: Optional[str] = None
+    cbt_enabled: Optional[bool] = None
+    cbt_full_interval: Optional[int] = None
     smtp_server: Optional[str] = None
     smtp_port: Optional[int] = None
     smtp_user: Optional[str] = None
@@ -163,6 +169,7 @@ class VmUpdate(BaseModel):
     retention_count: Optional[int] = None
     is_job_active: Optional[bool] = None
     power_off_for_backup: Optional[bool] = None
+    cbt_enabled: Optional[bool] = None
     schedule_frequency: Optional[str] = None
     schedule_days: Optional[str] = None
 
@@ -187,6 +194,7 @@ class VmResponse(BaseModel):
     current_action: str
     power_state: str
     power_off_for_backup: bool
+    cbt_enabled: bool = True
 
 
 class SyncResult(BaseModel):

@@ -331,6 +331,8 @@ def save_config(
     repo_min_free_gb: int = Form(50),
     exclude_infra_vms: bool = Form(True),
     vddk_libdir: str = Form("/opt/vmware-vix-disklib-distrib"),
+    cbt_enabled: bool = Form(False),
+    cbt_full_interval: int = Form(7),
 
     storage_type: str = Form("SMB"),
     nfs_path: str = Form(""),
@@ -379,6 +381,8 @@ def save_config(
     config.repo_min_free_gb = max(1, min(10000, repo_min_free_gb))
     config.exclude_infra_vms = exclude_infra_vms
     config.vddk_libdir = vddk_libdir.strip() or "/opt/vmware-vix-disklib-distrib"
+    config.cbt_enabled = cbt_enabled
+    config.cbt_full_interval = max(1, min(60, cbt_full_interval))
     
     config.storage_type = storage_type
     config.nfs_path = nfs_path
@@ -495,6 +499,7 @@ def update_job(
     retention_count: int = Form(2),
     is_job_active: bool = Form(False),
     power_off_for_backup: bool = Form(False),
+    cbt_enabled: bool = Form(False),
     schedule_frequency: str = Form("daily"),
     schedule_days: str = Form("0,1,2,3,4,5,6"),
     db: Session = Depends(get_db)
@@ -507,6 +512,7 @@ def update_job(
         vm.retention_count = retention_count
         vm.is_job_active = is_job_active
         vm.power_off_for_backup = power_off_for_backup
+        vm.cbt_enabled = cbt_enabled
         vm.schedule_frequency = schedule_frequency if schedule_frequency in ("daily", "weekly", "monthly") else "daily"
         valid_days = [d.strip() for d in schedule_days.split(',') if d.strip().isdigit() and 0 <= int(d.strip()) <= 6]
         vm.schedule_days = ','.join(valid_days) if valid_days else "0,1,2,3,4,5,6"

@@ -47,6 +47,8 @@ def config_to_dict(config):
         "repo_min_free_gb": getattr(config, "repo_min_free_gb", 50),
         "exclude_infra_vms": getattr(config, "exclude_infra_vms", True),
         "vddk_libdir": getattr(config, "vddk_libdir", None) or "",
+        "cbt_enabled": getattr(config, "cbt_enabled", True),
+        "cbt_full_interval": getattr(config, "cbt_full_interval", 7),
         "smtp_server": config.smtp_server,
         "smtp_port": config.smtp_port,
         "smtp_user": config.smtp_user,
@@ -108,6 +110,10 @@ def update_storage_config(db, data):
         config.exclude_infra_vms = bool(data["exclude_infra_vms"])
     if "vddk_libdir" in data and data["vddk_libdir"] is not None:
         config.vddk_libdir = data["vddk_libdir"]
+    if "cbt_enabled" in data and data["cbt_enabled"] is not None:
+        config.cbt_enabled = bool(data["cbt_enabled"])
+    if "cbt_full_interval" in data and data["cbt_full_interval"] is not None:
+        config.cbt_full_interval = max(1, min(60, int(data["cbt_full_interval"])))
     db.commit()
     db.refresh(config)
     return config
@@ -314,6 +320,7 @@ def vm_to_dict(vm):
         "current_action": vm.current_action,
         "power_state": vm.power_state,
         "power_off_for_backup": vm.power_off_for_backup,
+        "cbt_enabled": getattr(vm, "cbt_enabled", True),
     }
 
 
@@ -323,7 +330,7 @@ def update_vm_job(db, vm_id, data):
         raise ValueError("VM not found")
     for field in (
         "is_selected", "schedule_hour", "schedule_minute", "retention_count",
-        "is_job_active", "power_off_for_backup", "schedule_frequency",
+        "is_job_active", "power_off_for_backup", "cbt_enabled", "schedule_frequency",
     ):
         if field in data and data[field] is not None:
             setattr(vm, field, data[field])
@@ -401,9 +408,13 @@ def list_backups_grouped(db):
     backups = worker.get_available_backups(config)
     grouped = {}
     for b in backups:
-        grouped.setdefault(b["vm_name"], []).append(
-            {"date": b["date"], "path": b["path"], "size": b["size"]}
-        )
+        grouped.setdefault(b["vm_name"], []).append({
+            "date": b.get("display_date") or b["date"],
+            "path": b["path"],
+            "size": b["size"],
+            "point_type": b.get("point_type", "legacy"),
+            "backup_type": b.get("backup_type", "legacy"),
+        })
     return [{"vm_name": vm, "versions": versions} for vm, versions in sorted(grouped.items())]
 
 

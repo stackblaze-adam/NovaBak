@@ -370,3 +370,65 @@ def export_live_nbd(
                 remove_snapshot_func(si, vm_name, snap_name, timeout_mins=30)
             except Exception as ce:
                 log_error(f"[NBD] Snapshot cleanup error: {ce}")
+
+
+def read_snapshot_extent(
+    si,
+    vm,
+    snap_obj,
+    disk,
+    offset,
+    length,
+    server_host,
+    host_user,
+    host_password,
+    config=None,
+    connection_type=vsphere_context.CONN_AUTO,
+):
+    """Read a byte range from a snapshot-backed disk via NBD/VDDK."""
+    if not is_available(config):
+        raise VddkNotAvailableError(availability_message(config))
+
+    ensure_vddk_runtime_dirs()
+    libdir = get_vddk_libdir(config)
+    thumbprint = get_server_thumbprint(server_host)
+    conn_type = vsphere_context.resolve_connection_type(si, connection_type)
+    candidates = vsphere_context.vddk_disk_open_candidates(disk, conn_type)
+
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, prefix="vddk_pw_") as pw_file:
+        pw_file.write(host_password)
+        pw_path = pw_file.name
+
+    nbdsh = shutil.which("nbdsh")
+    if not nbdsh:
+        os.unlink(pw_path)
+        raise VddkNotAvailableError("nbdsh not found in PATH (install libnbd-bin)")
+
+    last_err = None
+    try:
+        for disk_ds_path in candidates:
+            cmd, _ = vsphere_context.build_nbdkit_vddk_cmd(
+                si=si,
+                vm=vm,
+                snap_obj=snap_obj,
+                disk_ds_path=disk_ds_path,
+                server_host=server_host,
+                user=host_user,
+                password_file=pw_path,
+                thumbprint=thumbprint,
+                libdir=libdir,
+                stored_type=connection_type,
+            )
+            script = f"import sys; sys.stdout.buffer.write(h.pread({int(length)}, {int(offset)}))"
+            run_cmd = cmd + ["--run", f'{nbdsh} -c "{script}"']
+            proc = subprocess.run(run_cmd, capture_output=True, timeout=7200)
+            if proc.returncode == 0:
+                return proc.stdout
+            last_err = (proc.stderr or proc.stdout or b"").decode("utf-8", errors="replace")[:500]
+            log_warn(f"[NBD] extent read failed for {disk_ds_path}: {last_err}")
+        raise RuntimeError(last_err or "VDDK extent read failed for all disk candidates")
+    finally:
+        try:
+            os.unlink(pw_path)
+        except OSError:
+            pass

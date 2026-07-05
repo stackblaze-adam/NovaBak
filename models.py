@@ -90,9 +90,9 @@ class Config(Base):
     backup_transport = Column(String, default="nbd")
     repo_min_free_gb = Column(Integer, default=50)
     exclude_infra_vms = Column(Boolean, default=False)
-    vddk_libdir = Column(String, default="")
-
-    # Storage Settings
+    # CBT / incremental backup settings
+    cbt_enabled = Column(Boolean, default=True)
+    cbt_full_interval = Column(Integer, default=7)  # incremental count before forced full
     storage_type = Column(String, default="SMB") # SMB, NFS, S3
     nfs_path = Column(String, default="")
     s3_endpoint = Column(String, default="")
@@ -133,6 +133,7 @@ class VM(Base):
     power_state = Column(String, default="Unknown") # poweredOn, poweredOff, etc.
     speed_mbps = Column(Float, default=0.0)  # Last known transfer speed
     power_off_for_backup = Column(Boolean, default=False)  # Shutdown VM before backup for faster direct-stream path
+    cbt_enabled = Column(Boolean, default=True)  # Per-VM CBT; None would inherit config — use True default
 
 class BackupLog(Base):
     __tablename__ = "backup_logs"
@@ -214,6 +215,9 @@ def init_db():
             ("exclude_infra_vms", "ALTER TABLE config ADD COLUMN exclude_infra_vms BOOLEAN DEFAULT 1"),
             ("vddk_libdir", "ALTER TABLE config ADD COLUMN vddk_libdir VARCHAR DEFAULT '/opt/vmware-vix-disklib-distrib'"),
             ("connection_type", "ALTER TABLE esxi_hosts ADD COLUMN connection_type VARCHAR DEFAULT 'auto'"),
+            ("cbt_enabled", "ALTER TABLE config ADD COLUMN cbt_enabled BOOLEAN DEFAULT 1"),
+            ("cbt_full_interval", "ALTER TABLE config ADD COLUMN cbt_full_interval INTEGER DEFAULT 7"),
+            ("vm_cbt_enabled", "ALTER TABLE vms ADD COLUMN cbt_enabled BOOLEAN DEFAULT 1"),
         ]
         
         from logger_util import log_info, log_warn

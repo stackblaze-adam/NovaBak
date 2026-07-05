@@ -15,8 +15,17 @@ from models import SessionLocal, Config, VM, BackupLog, RestoreJob
 from config_env import DATA_DIR
 from logger_util import log_info, log_warn, log_error, log_debug
 
-def cleanup_old_backups(storage, vm_name, retention_count):
-    """ Deletes backup folders for the specific VM, keeping only the newest `retention_count` folders. """
+def cleanup_old_backups(storage, vm_name, retention_count, full_interval=7):
+    """Deletes backup folders for the specific VM, keeping only the newest `retention_count` folders."""
+    chain_rel = f"{vm_name}/_chain/chain.json"
+    if storage.exists(chain_rel):
+        from backup_manifest import load_chain
+        from chain_restore import apply_chain_retention
+        chain = load_chain(storage, vm_name)
+        if chain:
+            apply_chain_retention(storage, vm_name, chain, retention_count, full_interval)
+        return
+
     vm_dir = vm_name
     if not storage.exists(vm_dir):
         return
@@ -372,6 +381,7 @@ def perform_backup(vm_id: int):
 
     try:
         timeout_m = config.backup_timeout_mins if hasattr(config, 'backup_timeout_mins') else 15
+        use_cbt = getattr(config, "cbt_enabled", True) and getattr(vm, "cbt_enabled", True)
         dest_rel_dir = get_backup_dest_folder(vm.vm_name)
 
         # --- POWER OFF (if configured) ---
@@ -445,21 +455,63 @@ def perform_backup(vm_id: int):
         def cancel_check():
             return is_backup_cancelled(vm_id)
 
-        success, result_msg = backup_engine.export_vm_native(
-            si=si,
-            vm_name=vm.vm_name,
-            storage=storage,
-            dest_rel_dir=dest_rel_dir,
-            progress_callback=progress_cb,
-            speed_callback=speed_cb,
-            is_cancelled_func=cancel_check,
-            max_retries=3,
-            config=config,
-            host_ip=host.host_ip,
-            host_user=host.username,
-            host_password=host.password,
-            connection_type=getattr(host, "connection_type", None) or vsphere_context.CONN_AUTO,
-        )
+        success = False
+        result_msg = ""
+        if use_cbt:
+            import cbt_transport
+            if cbt_transport.cbt_supported_storage(storage):
+                vm.current_action = "CBT backup..."
+                db.commit()
+
+                def cbt_action(msg):
+                    try:
+                        vm.current_action = msg
+                        db.commit()
+                    except Exception:
+                        pass
+
+                success, result_msg, cbt_dest = cbt_transport.export_cbt_backup(
+                    si=si,
+                    vm_name=vm.vm_name,
+                    storage=storage,
+                    config=config,
+                    vm_record=vm,
+                    host_ip=host.host_ip,
+                    host_user=host.username,
+                    host_password=host.password,
+                    progress_callback=progress_cb,
+                    speed_callback=speed_cb,
+                    is_cancelled_func=cancel_check,
+                    connection_type=getattr(host, "connection_type", None) or vsphere_context.CONN_AUTO,
+                    create_snapshot_func=backup_engine._create_live_backup_snapshot,
+                    remove_snapshot_func=backup_engine._remove_backup_snapshot,
+                    download_http_func=backup_engine._download_file_http,
+                    download_http_range_func=backup_engine._download_file_http_range,
+                    action_callback=cbt_action,
+                )
+                if cbt_dest:
+                    dest_rel_dir = cbt_dest
+                if not success:
+                    log_warn(f"[CBT] Failed ({result_msg}); falling back to legacy full backup")
+            else:
+                log_warn("[CBT] S3 storage detected; using legacy full backup")
+
+        if not success:
+            success, result_msg = backup_engine.export_vm_native(
+                si=si,
+                vm_name=vm.vm_name,
+                storage=storage,
+                dest_rel_dir=dest_rel_dir,
+                progress_callback=progress_cb,
+                speed_callback=speed_cb,
+                is_cancelled_func=cancel_check,
+                max_retries=3,
+                config=config,
+                host_ip=host.host_ip,
+                host_user=host.username,
+                host_password=host.password,
+                connection_type=getattr(host, "connection_type", None) or vsphere_context.CONN_AUTO,
+            )
 
         if not success and "cancelled" in (result_msg or "").lower():
             raise BackupCancelled(result_msg)
@@ -482,7 +534,8 @@ def perform_backup(vm_id: int):
         db.add(BackupLog(vm_name=vm.vm_name, status=vm.last_status, message=log_msg))
         
         if success:
-            cleanup_old_backups(storage, vm.vm_name, vm.retention_count)
+            full_interval = getattr(config, "cbt_full_interval", 7) or 7
+            cleanup_old_backups(storage, vm.vm_name, vm.retention_count, full_interval)
             rich_body = (
                 f"Backup Report — {vm.vm_name}\n"
                 f"{'=' * 50}\n"
@@ -647,9 +700,31 @@ def start_scheduler():
 
 def get_available_backups(config):
     """ Scans the target storage and returns a list of available backups. """
+    import json
+    import re
     storage = storage_util.get_storage(config)
     if config.storage_type == "SMB":
         authenticate_smb(config)
+
+    def _format_point_id(point_id):
+        m = re.match(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$", point_id or "")
+        if m:
+            y, mo, d, h, mi, _s = m.groups()
+            return f"{y}-{mo}-{d} {h}:{mi}"
+        return point_id
+
+    def _manifest_point_type(storage, manifest_rel):
+        try:
+            if not storage.exists(manifest_rel):
+                return "full"
+            with storage.open_read(manifest_rel) as f:
+                raw = f.read()
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            data = json.loads(raw)
+            return data.get("type", "full")
+        except Exception:
+            return "full"
     
     backups = []
     try:
@@ -657,8 +732,37 @@ def get_available_backups(config):
         vm_dirs = storage.list_dirs("")
         log_info(f"[SCAN] Storage type={config.storage_type}. Found {len(vm_dirs)} top-level dirs: {vm_dirs}")
         for vm_name in vm_dirs:
-            # List date folders within each VM directory
+            # CBT chain points
+            chain_points_rel = f"{vm_name}/_chain/points"
+            if storage.exists(f"{vm_name}/_chain/chain.json"):
+                try:
+                    point_dirs = storage.list_dirs(chain_points_rel)
+                    for point_id in point_dirs:
+                        rel_date_dir = f"{chain_points_rel}/{point_id}"
+                        files = storage.list_files(rel_date_dir)
+                        found_vmx = next((f for f in files if f.endswith('.vmx')), None)
+                        if found_vmx:
+                            backup_file_rel = f"{rel_date_dir}/{found_vmx}"
+                            manifest_rel = f"{rel_date_dir}/manifest.json"
+                            point_type = _manifest_point_type(storage, manifest_rel)
+                            size_bytes = storage.get_size(rel_date_dir)
+                            size_str = f"{size_bytes / (1024**3):.2f} GB" if size_bytes > 1024**3 else f"{size_bytes / (1024**2):.2f} MB"
+                            full_path = storage._full_path(backup_file_rel) if hasattr(storage, '_full_path') else f"{storage.get_base_path()}{backup_file_rel}"
+                            backups.append({
+                                "vm_name": vm_name,
+                                "date": point_id,
+                                "display_date": _format_point_id(point_id),
+                                "path": full_path,
+                                "size": size_str,
+                                "backup_type": "cbt",
+                                "point_type": point_type,
+                            })
+                except Exception as e:
+                    log_warn(f"[SCAN] CBT chain scan error for {vm_name}: {e}")
+
+            # Legacy date folders
             date_folders = storage.list_dirs(vm_name)
+            date_folders = [d for d in date_folders if d != "_chain"]
             log_info(f"[SCAN] VM '{vm_name}' -> {len(date_folders)} date folders: {date_folders}")
             for date_folder in date_folders:
                 rel_date_dir = f"{vm_name}/{date_folder}"
@@ -689,8 +793,11 @@ def get_available_backups(config):
                     backups.append({
                         "vm_name": vm_name,
                         "date": date_folder,
+                        "display_date": date_folder,
                         "path": full_path,
-                        "size": size_str
+                        "size": size_str,
+                        "backup_type": "legacy",
+                        "point_type": "full",
                     })
     except Exception as e:
         import traceback

@@ -277,6 +277,32 @@
                                         <input type="text" name="vddk_libdir" value="{{ config.vddk_libdir or '/opt/vmware-vix-disklib-distrib' }}" class="w-full py-2 px-3 text-sm font-mono">
                                     </div>
                                 </div>
+
+                                <div class="mt-6 pt-5 border-t" style="border-color: var(--border-color)">
+                                    <h3 class="text-sm font-semibold mb-1">Incremental backups (CBT)</h3>
+                                    <p class="text-xs mb-4" style="color: var(--text-muted)">Uses VMware Changed Block Tracking to store deltas after an initial full backup. Requires local or NFS repository (not S3).</p>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="inline-flex items-center gap-2 text-sm cursor-pointer">
+                                                <input type="checkbox" name="cbt_enabled" value="True"
+                                                       {% if not config or config.cbt_enabled is not defined or config.cbt_enabled %}checked{% endif %}
+                                                       class="rounded w-4 h-4">
+                                                <span>Enable incremental (CBT) backups</span>
+                                            </label>
+                                            <p class="text-[10px] opacity-60 mt-1 ml-6">When off, every run is a full VM copy to a date folder.</p>
+                                        </div>
+                                        <div>
+                                            <div class="field-label-row">
+                                                <span class="input-label">Full backup interval</span>
+                                                <span class="field-tip" tabindex="0" aria-label="Help: CBT full interval">
+                                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                                    <span class="field-tip-text">After this many incremental backups, NovaBak creates a new synthetic full and trims the chain.</span>
+                                                </span>
+                                            </div>
+                                            <input type="number" name="cbt_full_interval" value="{{ config.cbt_full_interval or 7 }}" min="1" max="60" class="w-full py-2 px-3 text-center text-sm">
+                                        </div>
+                                    </div>
+                                </div>
                                 <div class="mt-6 flex justify-end">
                                     <button type="submit" class="btn-primary px-6 py-2 text-sm font-semibold">Save engine settings</button>
                                 </div>

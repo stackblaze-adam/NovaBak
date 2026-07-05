@@ -1793,7 +1793,7 @@
                                     <span id="list-prog-idle-{{ vm.id }}" class="text-xs" style="color: var(--text-muted)">{% if not vm.current_action %}—{% endif %}</span>
                                 </td>
                                 <td class="text-xs font-mono whitespace-nowrap" style="color: var(--text-muted)">{{ vm.last_backup.strftime('%Y-%m-%d %H:%M') if vm.last_backup else 'Never' }}</td>
-                                <td class="text-xs whitespace-nowrap">{{ (vm.schedule_frequency or 'daily')|title }} {{ '%02d'|format(vm.schedule_hour) }}:{{ '%02d'|format(vm.schedule_minute) }} · keep {{ vm.retention_count }}</td>
+                                <td class="text-xs whitespace-nowrap">{{ (vm.schedule_frequency or 'daily')|title }} {{ '%02d'|format(vm.schedule_hour) }}:{{ '%02d'|format(vm.schedule_minute) }} · keep {{ vm.retention_count }}{% if vm.cbt_enabled is not defined or vm.cbt_enabled %} · CBT{% else %} · full{% endif %}</td>
                                 <td class="text-right whitespace-nowrap actions-cell">
                                     <div class="inline-flex gap-1 items-center justify-end">
                                         <button type="button" id="list-form-stop-{{ vm.id }}" onclick="stopVmJob({{ vm.id }})" class="hidden btn-danger p-1.5 rounded" title="Abort">
@@ -2464,6 +2464,39 @@
         getJobForms(vmId).forEach(updatePowerModeLabelForForm);
     }
 
+    function updateCbtLabelForForm(form) {
+        const cb = form.querySelector('input[name="cbt_enabled"]');
+        const el = form.querySelector('.job-cbt-label');
+        if (!cb || !el) return;
+        const inline = form.classList.contains('job-schedule-inline');
+        if (cb.checked) {
+            el.textContent = inline ? 'Incremental' : 'Incremental — delta after first full';
+            el.className = inline
+                ? 'job-cbt-label text-xs font-medium whitespace-nowrap text-[var(--brand)]'
+                : 'job-cbt-label text-[10px] font-medium leading-tight text-[var(--brand)]';
+        } else {
+            el.textContent = inline ? 'Full only' : 'Full only — no incrementals';
+            el.className = inline
+                ? 'job-cbt-label text-xs font-medium whitespace-nowrap opacity-60'
+                : 'job-cbt-label text-[10px] font-medium leading-tight opacity-60';
+        }
+    }
+
+    function updateCbtLabel(vmId) {
+        getJobForms(vmId).forEach(updateCbtLabelForForm);
+    }
+
+    function backupPointTypeBadge(pointType) {
+        const labels = {
+            full: { text: 'Full', cls: 'bg-blue-500/15 text-blue-300' },
+            incremental: { text: 'Incremental', cls: 'bg-emerald-500/15 text-emerald-300' },
+            synthetic_full: { text: 'Synthetic full', cls: 'bg-violet-500/15 text-violet-300' },
+            legacy: { text: 'Legacy full', cls: 'bg-gray-500/15 text-gray-300' },
+        };
+        const info = labels[pointType] || labels.full;
+        return `<span class="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${info.cls}">${info.text}</span>`;
+    }
+
     function applyDaysRowVisibility(form) {
         if (!form) return;
         const freq = getJobScheduleFrequency(form);
@@ -2500,6 +2533,7 @@
             seen.add(vmId);
             showDaysRow(vmId);
             updatePowerModeLabel(vmId);
+            updateCbtLabel(vmId);
         });
     });
 
@@ -2565,26 +2599,31 @@
         versionSection.classList.remove('hidden');
 
         versionList.innerHTML = group.versions.map((v, idx) => `
-            <button type="button" onclick="selectVersion('${v.path.replace(/\\/g, '\\\\').replace(/'/g,"\\'")}', '${v.date}', '${v.size}')"
+            <button type="button" onclick="selectVersion('${v.path.replace(/\\/g, '\\\\').replace(/'/g,"\\'")}', '${v.date}', '${v.size}', '${v.point_type || 'full'}')"
                     id="vcard-${idx}"
                     class="version-card w-full text-left rounded border px-3 py-2 transition-all hover:border-blue-500 hover:bg-blue-500/10"
                     style="border-color: var(--border-color)">
-                <div class="flex justify-between items-center">
-                    <div class="font-mono font-semibold text-xs" style="color: var(--brand)">${v.date}</div>
-                    <div class="text-[10px] opacity-60 font-mono">${v.size}</div>
+                <div class="flex justify-between items-center gap-2">
+                    <div class="font-mono font-semibold text-xs truncate" style="color: var(--brand)">${v.date}</div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        ${backupPointTypeBadge(v.point_type || (v.backup_type === 'legacy' ? 'legacy' : 'full'))}
+                        <div class="text-[10px] opacity-60 font-mono">${v.size}</div>
+                    </div>
                 </div>
             </button>`).join('');
 
         // Auto-select latest (first) version
         if (group.versions.length > 0) {
-            selectVersion(group.versions[0].path, group.versions[0].date, group.versions[0].size);
+            const v0 = group.versions[0];
+            selectVersion(v0.path, v0.date, v0.size, v0.point_type || 'full');
             document.getElementById('vcard-0')?.classList.add('border-blue-500', 'bg-blue-500/10');
         }
     }
 
-    function selectVersion(path, date, size) {
+    function selectVersion(path, date, size, pointType) {
         document.getElementById('selectedOvaPath').value = path;
-        document.getElementById('selectedVersionLabel').textContent = `${date}  •  ${size}  •  ${path}`;
+        const typeLabel = (pointType || 'full').replace('_', ' ');
+        document.getElementById('selectedVersionLabel').textContent = `${date}  •  ${typeLabel}  •  ${size}  •  ${path}`;
         // Highlight selected card
         document.querySelectorAll('.version-card').forEach(el => {
             el.classList.remove('border-blue-500', 'bg-blue-500/10');

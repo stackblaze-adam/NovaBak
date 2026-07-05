@@ -182,6 +182,35 @@ def _download_file_http(si, datastore_name, file_path, storage, dest_rel_path, p
     return bytes_written
 
 
+def _download_file_http_range(si, datastore_name, file_path, start, length, vm=None,
+                              dc_path=None, connection_type=vsphere_context.CONN_AUTO):
+    """
+    Download a byte range from ESXi/vCenter HTTP folder API.
+    Returns raw bytes (length may be shorter if EOF).
+    """
+    host_ip = _get_host_ip(si)
+    if not host_ip:
+        raise Exception("Cannot determine host IP for HTTP folder access")
+
+    if not dc_path:
+        dc_path = vsphere_context.resolve_dc_path(si, vm=vm, stored_type=connection_type)
+
+    cookies = _get_session_cookies(si)
+    encoded_path = '/'.join(url_quote(p, safe='') for p in file_path.split('/'))
+    url = (f"https://{host_ip}/folder/{encoded_path}"
+           f"?dcPath={url_quote(dc_path, safe='')}&dsName={url_quote(datastore_name, safe='')}")
+
+    end = start + length - 1
+    headers = {"Range": f"bytes={start}-{end}"}
+    resp = requests.get(url, headers=headers, cookies=cookies, verify=False, timeout=7200)
+
+    if resp.status_code not in (200, 206):
+        body = resp.text[:500] if resp.text else '(empty)'
+        raise Exception(f"HTTP {resp.status_code} range download {file_path}@{start}: {body}")
+
+    return resp.content
+
+
 # ---------------------------------------------------------------------------
 #  Preflight: Disconnect Removable Devices
 # ---------------------------------------------------------------------------
@@ -1054,6 +1083,11 @@ def import_vm_native(si, storage, source_rel_dir, target_ds, target_name, progre
     try:
         log_info(f"[RESTORE] Starting import_vm_native for {target_name} on {target_ds}")
         content = si.RetrieveContent()
+
+        from chain_restore import resolve_restore_source
+        source_rel_dir, _mat = resolve_restore_source(storage, source_rel_dir)
+        if _mat:
+            log_info(f"[RESTORE] Using materialized CBT chain at {source_rel_dir}")
         
         # More robust datacenter find
         def find_obj(container, vim_type):
