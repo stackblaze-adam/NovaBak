@@ -841,6 +841,10 @@
 
                 set('ov-disk-center-main', `${st.disk_free_gb} GB`);
                 set('ov-disk-center-sub', `${freePct}% free`);
+                const otherUsedGb = Math.max(0, Math.round((st.disk_used_gb - backupGb) * 10) / 10);
+                set('ov-legend-free', `${st.disk_free_gb} GB`);
+                set('ov-legend-used', `${otherUsedGb} GB`);
+                set('ov-legend-backup', st.total_human || '0 GB');
             } else {
                 diskBlock?.classList.add('hidden');
             }
