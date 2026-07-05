@@ -15,6 +15,7 @@ import requests
 from pyVmomi import vim
 
 from logger_util import log_info, log_warn, log_error
+import vsphere_context
 
 CHUNK_SIZE = 1024 * 1024
 
@@ -137,8 +138,7 @@ def _stream_url_to_storage(url, storage, dest_rel_path, cookies, total_size_hint
 
 
 def _find_snapshot_obj(si, vm_name, snap_name):
-    from backup_engine import _get_vm
-    vm = _get_vm(si, vm_name)
+    vm = vsphere_context.find_vm_by_name(si, vm_name)
     if not vm or not vm.snapshot:
         return None
 
@@ -188,12 +188,15 @@ def export_live_nfc(
     create_snapshot_func=None,
     remove_snapshot_func=None,
     download_http_func=None,
+    connection_type=vsphere_context.CONN_AUTO,
 ):
     """
     Live VM backup: snapshot → ExportSnapshot → NFC stream (no ESXi temp copy).
+    Requires vCenter; standalone ESXi should use VDDK or staged stream instead.
     """
     from backup_engine import _get_session_cookies
 
+    vm = vsphere_context.find_vm_by_name(si, vm_name)
     snap_name = None
     lease = None
     updater = None
@@ -279,6 +282,8 @@ def export_live_nfc(
                     download_http_func(
                         si, disk["ds_name"], disk["rel_path"], storage, desc_rel,
                         is_cancelled_func=is_cancelled_func,
+                        vm=vm,
+                        connection_type=connection_type,
                     )
                     desc_ok = True
                     files_written.append(disk_base)
@@ -315,6 +320,8 @@ def export_live_nfc(
                 download_http_func(
                     si, vmx_ds_name, vmx_rel_path, storage, f"{dest_rel_dir}/{vmx_filename}",
                     is_cancelled_func=is_cancelled_func,
+                    vm=vm,
+                    connection_type=connection_type,
                 )
                 files_written.append(vmx_filename)
             except Exception as e:

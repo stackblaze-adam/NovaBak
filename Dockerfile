@@ -40,7 +40,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Vendor dir for VDDK tarball (mounted at runtime on production)
-RUN mkdir -p data bin/ovftool static vendor/vddk
+RUN mkdir -p data bin/ovftool static vendor/vddk /tmp/vmware-root \
+    && chmod 1777 /tmp/vmware-root
 
 VOLUME ["/app/data"]
 

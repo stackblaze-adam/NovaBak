@@ -406,16 +406,19 @@ def add_esxi_host(
     host_ip: str = Form(...),
     username: str = Form(...),
     password: str = Form(""),
+    connection_type: str = Form("auto"),
     db: Session = Depends(get_db)
 ):
     require_auth(request)
     try:
-        backup_ops.add_esxi_host(db, name, host_ip, username, password)
+        backup_ops.add_esxi_host(db, name, host_ip, username, password, connection_type)
     except ValueError as e:
-        return RedirectResponse(url=f"/?error={e}", status_code=303)
+        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={e}", status_code=303)
     except ConnectionError as e:
-        return RedirectResponse(url=f"/?error={e}", status_code=303)
-    return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={e}", status_code=303)
+    except Exception as e:
+        return RedirectResponse(url=f"/?tab=settings&panel=hosts&error={e}", status_code=303)
+    return RedirectResponse(url="/?tab=settings&panel=hosts", status_code=303)
 
 @app.post("/delete_esxi_host")
 def delete_esxi_host(request: Request, host_id: int = Form(...), db: Session = Depends(get_db)):
@@ -424,7 +427,7 @@ def delete_esxi_host(request: Request, host_id: int = Form(...), db: Session = D
     if host:
         db.delete(host)
         db.commit()
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/?tab=settings&panel=hosts", status_code=303)
 
 @app.post("/fetch_vms")
 def fetch_vms(request: Request, esxi_host_id: int = Form(...), db: Session = Depends(get_db)):

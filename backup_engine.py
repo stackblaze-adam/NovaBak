@@ -15,6 +15,7 @@ import requests
 from pyVmomi import vim
 from urllib.parse import quote as url_quote
 from logger_util import log_info, log_warn, log_error
+import vsphere_context
 
 # Disable SSL warnings for ESXi self-signed certs
 requests.packages.urllib3.disable_warnings(
@@ -35,23 +36,8 @@ INFRA_VM_PATTERNS = [
 #  Helper: Get VM object by name
 # ---------------------------------------------------------------------------
 def _get_vm(si, vm_name):
-    """Finds a VM by inventory path (ESXi standalone) or by iterating."""
-    content = si.RetrieveContent()
-
-    # Try inventory path first (fast, ESXi standalone)
-    vm = content.searchIndex.FindByInventoryPath(f"ha-datacenter/vm/{vm_name}")
-    if vm:
-        return vm
-
-    # Fallback: iterate all VMs
-    container = content.viewManager.CreateContainerView(
-        content.rootFolder, [vim.VirtualMachine], True)
-    for child in container.view:
-        if child.name == vm_name:
-            container.Destroy()
-            return child
-    container.Destroy()
-    return None
+    """Finds a VM on standalone ESXi or vCenter."""
+    return vsphere_context.find_vm_by_name(si, vm_name)
 
 
 # ---------------------------------------------------------------------------
@@ -102,13 +88,17 @@ def _get_host_ip(si):
 #  Download VMDK via Datastore HTTP
 # ---------------------------------------------------------------------------
 def _download_file_http(si, datastore_name, file_path, storage, dest_rel_path, progress_callback=None,
-                         progress_base=0, progress_total=100, speed_callback=None, is_cancelled_func=None):
+                         progress_base=0, progress_total=100, speed_callback=None, is_cancelled_func=None,
+                         vm=None, dc_path=None, connection_type=vsphere_context.CONN_AUTO):
     """
-    Downloads a file from ESXi's built-in HTTP file server via StorageProvider.
+    Downloads a file from ESXi/vCenter HTTP folder API via StorageProvider.
     """
     host_ip = _get_host_ip(si)
     if not host_ip:
-        raise Exception("Cannot determine ESXi host IP")
+        raise Exception("Cannot determine host IP for HTTP folder access")
+
+    if not dc_path:
+        dc_path = vsphere_context.resolve_dc_path(si, vm=vm, stored_type=connection_type)
 
     cookies = _get_session_cookies(si)
 
@@ -116,7 +106,7 @@ def _download_file_http(si, datastore_name, file_path, storage, dest_rel_path, p
     encoded_path = '/'.join(url_quote(p, safe='') for p in file_path.split('/'))
 
     url = (f"https://{host_ip}/folder/{encoded_path}"
-           f"?dcPath=ha-datacenter&dsName={url_quote(datastore_name, safe='')}")
+           f"?dcPath={url_quote(dc_path, safe='')}&dsName={url_quote(datastore_name, safe='')}")
 
     log_info(f"[DOWNLOAD] {file_path} from [{datastore_name}] to {dest_rel_path}")
 
@@ -502,11 +492,13 @@ def _pick_staging_datastore(si, source_ds_names, need_gb):
 def _export_snapshot_staged_stream(
     si, vm_name, storage, dest_rel_dir, disk_descriptors, vmx_ds_name, vmx_rel_path,
     config=None, progress_callback=None, speed_callback=None, is_cancelled_func=None,
+    create_snapshot_func=None,
 ):
     """
     Live backup: snapshot → CopyVirtualDisk to staging datastore → HTTP stream → cleanup.
     Staging datastore is chosen to avoid the VM's source datastore when possible.
     """
+    create_snapshot_func = create_snapshot_func or _create_backup_snapshot
     content = si.RetrieveContent()
     datacenter = content.rootFolder.childEntity[0]
     snap_name = None
@@ -527,7 +519,7 @@ def _export_snapshot_staged_stream(
     try:
         if progress_callback:
             progress_callback(2)
-        snap_obj, snap_name = _create_backup_snapshot(si, vm_name)
+        snap_obj, snap_name = create_snapshot_func(si, vm_name)
         if not snap_obj:
             return False, f"Snapshot creation failed: {snap_name}"
         if progress_callback:
@@ -650,55 +642,68 @@ def _export_live_stream(
     si, vm_name, storage, dest_rel_dir, disk_descriptors, vmx_ds_name, vmx_rel_path,
     config=None, host_ip=None, host_user=None, host_password=None,
     progress_callback=None, speed_callback=None, is_cancelled_func=None,
-    transport="nbd",
+    transport="nbd", connection_type=vsphere_context.CONN_AUTO,
 ):
     """
-    Modern live backup: VDDK/NBD → NFC ExportSnapshot → cross-datastore staged stream.
+    Modern live backup: VDDK/NBD → NFC ExportSnapshot (vCenter) → cross-datastore staged stream.
     """
+    conn_type = vsphere_context.resolve_connection_type(si, connection_type)
+    log_info(f"[BACKUP] vSphere endpoint: {vsphere_context.connection_label(conn_type)}")
+    live_snap = _create_live_backup_snapshot
+
     if transport == "nbd":
         import vddk_transport
         if vddk_transport.is_available(config):
             if not host_user or not host_password:
-                return False, "NBD/VDDK transport requires ESXi host credentials"
+                return False, "NBD/VDDK transport requires host credentials"
             if not host_ip:
-                return False, "Cannot determine ESXi host IP for NBD transport"
-            return vddk_transport.export_live_nbd(
+                return False, "Cannot determine host IP/FQDN for NBD transport"
+            ok, msg = vddk_transport.export_live_nbd(
                 si=si, vm_name=vm_name, storage=storage, dest_rel_dir=dest_rel_dir,
                 disk_descriptors=disk_descriptors, vmx_ds_name=vmx_ds_name, vmx_rel_path=vmx_rel_path,
-                host_ip=host_ip, host_user=host_user, host_password=host_password, config=config,
+                server_host=host_ip, host_user=host_user, host_password=host_password, config=config,
+                connection_type=connection_type,
                 progress_callback=progress_callback, speed_callback=speed_callback,
                 is_cancelled_func=is_cancelled_func,
-                create_snapshot_func=_create_backup_snapshot,
+                create_snapshot_func=live_snap,
                 remove_snapshot_func=_remove_backup_snapshot,
                 download_vmx_func=_download_file_http,
             )
-        log_info(
-            f"[BACKUP] VDDK unavailable ({vddk_transport.availability_message(config)}); "
-            "trying NFC ExportSnapshot"
-        )
+            if ok:
+                return True, msg
+            log_info(f"[BACKUP] VDDK stream failed ({msg[:200]}); trying next transport")
+        else:
+            log_info(
+                f"[BACKUP] VDDK unavailable ({vddk_transport.availability_message(config)}); "
+                "trying next transport"
+            )
 
-    if transport in ("nbd", "nfc"):
+    if transport in ("nbd", "nfc") and vsphere_context.supports_nfc_export(si, connection_type):
         import nfc_transport
         ok, msg = nfc_transport.export_live_nfc(
             si=si, vm_name=vm_name, storage=storage, dest_rel_dir=dest_rel_dir,
             disk_descriptors=disk_descriptors, vmx_ds_name=vmx_ds_name, vmx_rel_path=vmx_rel_path,
             progress_callback=progress_callback, speed_callback=speed_callback,
             is_cancelled_func=is_cancelled_func,
-            create_snapshot_func=_create_backup_snapshot,
+            create_snapshot_func=live_snap,
             remove_snapshot_func=_remove_backup_snapshot,
             download_http_func=_download_file_http,
+            connection_type=connection_type,
         )
         if ok:
             return True, msg
         if "NotSupported" in msg or "not supported" in msg.lower():
-            log_info("[BACKUP] ExportSnapshot not supported on this host; using cross-datastore staged stream")
+            log_info("[BACKUP] ExportSnapshot not supported; using cross-datastore staged stream")
         else:
             return False, msg
+    elif transport in ("nbd", "nfc"):
+        log_info("[BACKUP] NFC ExportSnapshot requires vCenter; trying staged stream fallback")
 
     return _export_snapshot_staged_stream(
         si, vm_name, storage, dest_rel_dir, disk_descriptors, vmx_ds_name, vmx_rel_path,
         config=config, progress_callback=progress_callback, speed_callback=speed_callback,
         is_cancelled_func=is_cancelled_func,
+        create_snapshot_func=live_snap,
     )
 
 
@@ -774,22 +779,59 @@ def _check_datastore_capacity(si, vm_name, config):
     return True, "Datastore capacity OK"
 
 
+def _find_snapshot_by_name(vm, snap_name):
+    """Find snapshot managed object by name (searches full snapshot tree)."""
+    if not vm or not vm.snapshot:
+        return None
+
+    def walk(tree):
+        for s in tree:
+            if s.name == snap_name:
+                return s.snapshot
+            found = walk(s.childSnapshotList)
+            if found:
+                return found
+        return None
+
+    return walk(vm.snapshot.rootSnapshotList)
+
+
 def _collect_vm_disk_layout(vm):
     """Return disk descriptors, vmx paths, and power state for a VM."""
     power_state = getattr(vm.runtime, "powerState", "poweredOn")
     is_off = power_state == "poweredOff"
 
     disk_descriptors = []
-    if hasattr(vm, "layoutEx") and vm.layoutEx and vm.layoutEx.file:
+    seen = set()
+    for dev in getattr(vm.config.hardware, "device", []) or []:
+        if not isinstance(dev, vim.vm.device.VirtualDisk):
+            continue
+        backing = dev.backing
+        fn = getattr(backing, "fileName", None) if backing else None
+        if not fn:
+            continue
+        ds_name, rel_path = _parse_datastore_path(fn)
+        if not ds_name or fn in seen:
+            continue
+        seen.add(fn)
+        disk_descriptors.append({
+            "ds_name": ds_name,
+            "ds_path": fn,
+            "rel_path": rel_path,
+        })
+
+    if not disk_descriptors and hasattr(vm, "layoutEx") and vm.layoutEx and vm.layoutEx.file:
         for f in vm.layoutEx.file:
-            if f.type == "diskDescriptor":
-                ds_name, rel_path = _parse_datastore_path(f.name)
-                if ds_name:
-                    disk_descriptors.append({
-                        "ds_name": ds_name,
-                        "ds_path": f.name,
-                        "rel_path": rel_path,
-                    })
+            if f.type != "diskDescriptor" or f.name in seen:
+                continue
+            ds_name, rel_path = _parse_datastore_path(f.name)
+            if ds_name:
+                seen.add(f.name)
+                disk_descriptors.append({
+                    "ds_name": ds_name,
+                    "ds_path": f.name,
+                    "rel_path": rel_path,
+                })
 
     vmx_ds_name = None
     vmx_rel_path = None
@@ -848,21 +890,22 @@ def preflight_check(si, vm_name, timeout_mins=15, config=None, storage=None, **k
 # ===========================================================================
 #  MAIN: Create Snapshot
 # ===========================================================================
-def _create_backup_snapshot(si, vm_name, timeout_mins=10):
-    """Creates a crash-consistent snapshot for backup. Returns snapshot object or None."""
+def _create_backup_snapshot(si, vm_name, timeout_mins=10, quiesce=False):
+    """Creates a snapshot for backup. Returns (snapshot object, name) or (None, error)."""
     vm = _get_vm(si, vm_name)
     if not vm:
         return None, "VM not found"
 
     snap_name = f"VMBACKUP_TEMP_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    log_info(f"[SNAPSHOT] Creating {snap_name} for {vm_name}...")
+    kind = "quiesced" if quiesce else "crash-consistent"
+    log_info(f"[SNAPSHOT] Creating {snap_name} for {vm_name} ({kind})...")
 
     try:
         task = vm.CreateSnapshot_Task(
             name=snap_name,
             description="Temporary snapshot for automated backup",
             memory=False,
-            quiesce=False
+            quiesce=quiesce,
         )
 
         start = time.time()
@@ -874,18 +917,29 @@ def _create_backup_snapshot(si, vm_name, timeout_mins=10):
 
         if task.info.state == vim.TaskInfo.State.success:
             log_info(f"[SNAPSHOT] Created successfully: {snap_name}")
-            # Find the snapshot object
-            vm = _get_vm(si, vm_name)  # Refresh
-            if vm.snapshot:
-                for s in vm.snapshot.rootSnapshotList:
-                    if s.name == snap_name:
-                        return s.snapshot, snap_name
-            return True, snap_name
+            snap_obj = getattr(task.info, "result", None)
+            if snap_obj:
+                return snap_obj, snap_name
+            vm = _get_vm(si, vm_name)
+            snap_obj = _find_snapshot_by_name(vm, snap_name)
+            if snap_obj:
+                return snap_obj, snap_name
+            return None, f"Snapshot {snap_name} created but object not found"
         else:
             return None, f"Snapshot failed: {task.info.error}"
 
     except Exception as e:
         return None, f"Snapshot error: {e}"
+
+
+def _create_live_backup_snapshot(si, vm_name, timeout_mins=10):
+    """Live backup snapshot; quiesce when VMware Tools is running."""
+    vm = _get_vm(si, vm_name)
+    quiesce = False
+    if vm and getattr(vm, "guest", None):
+        if getattr(vm.guest, "toolsRunningStatus", None) == "guestToolsRunning":
+            quiesce = True
+    return _create_backup_snapshot(si, vm_name, timeout_mins=timeout_mins, quiesce=quiesce)
 
 
 # ===========================================================================
@@ -1083,9 +1137,9 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
 
     POWERED OFF → Direct HTTP stream (no snapshot, no CopyVirtualDisk).
 
-    POWERED ON / SUSPENDED → config.backup_transport:
-      nbd    — VDDK/NBD if installed, else NFC ExportSnapshot stream (default)
-      nfc    — Snapshot + HttpNfcLease ExportSnapshot stream (no ESXi temp copy)
+    POWERED ON / SUSPENDED → config.backup_transport (per host connection_type):
+      nbd    — VDDK/NBD if installed; vCenter also tries NFC ExportSnapshot; else staged stream
+      nfc    — vCenter: ExportSnapshot stream; standalone: staged stream
       legacy — Snapshot + CopyVirtualDisk temp on ESXi + HTTP stream
     """
     vm = _get_vm(si, vm_name)
@@ -1165,6 +1219,7 @@ def export_vm_native(si, vm_name, storage, dest_rel_dir, progress_callback=None,
                     config=config, host_ip=host_ip, host_user=host_user, host_password=host_password,
                     progress_callback=progress_callback, speed_callback=speed_callback,
                     is_cancelled_func=is_cancelled_func, transport=transport,
+                    connection_type=kwargs.get("connection_type", vsphere_context.CONN_AUTO),
                 )
                 if not ok:
                     raise Exception(result_msg)

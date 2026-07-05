@@ -10,6 +10,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import esxi_handler
 import backup_engine
 import storage_util
+import vsphere_context
 from models import SessionLocal, Config, VM, BackupLog, RestoreJob
 from config_env import DATA_DIR
 from logger_util import log_info, log_warn, log_error, log_debug
@@ -376,8 +377,7 @@ def perform_backup(vm_id: int):
         # --- POWER OFF (if configured) ---
         if getattr(vm, 'power_off_for_backup', False):
             from pyVmomi import vim as _vim
-            content = si.RetrieveContent()
-            esxi_vm = content.searchIndex.FindByInventoryPath(f"ha-datacenter/vm/{vm.vm_name}")
+            esxi_vm = vsphere_context.find_vm_by_name(si, vm.vm_name)
             current_power = getattr(esxi_vm.runtime, 'powerState', 'poweredOff') if esxi_vm else 'poweredOff'
 
             if current_power != 'poweredOff':
@@ -458,6 +458,7 @@ def perform_backup(vm_id: int):
             host_ip=host.host_ip,
             host_user=host.username,
             host_password=host.password,
+            connection_type=getattr(host, "connection_type", None) or vsphere_context.CONN_AUTO,
         )
 
         if not success and "cancelled" in (result_msg or "").lower():

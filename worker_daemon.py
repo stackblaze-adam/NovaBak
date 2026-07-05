@@ -40,6 +40,8 @@ def run_daemon():
     try:
         if db.query(ESXiHost).count() > 0:
             from services.vddk_install import ensure_vddk_installed
+            from vddk_transport import ensure_vddk_runtime_dirs
+            ensure_vddk_runtime_dirs()
             ok, msg = ensure_vddk_installed(db.query(Config).first())
             log_info(f"[VDDK] Startup check: {msg}" if ok else f"[VDDK] Startup: {msg}")
     finally:

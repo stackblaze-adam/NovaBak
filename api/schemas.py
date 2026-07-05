@@ -142,6 +142,7 @@ class ESXiHostCreate(BaseModel):
     host_ip: str
     username: str
     password: str
+    connection_type: Optional[str] = "auto"  # auto | standalone | vcenter
 
 
 class ESXiHostResponse(BaseModel):
@@ -149,6 +150,8 @@ class ESXiHostResponse(BaseModel):
     name: str
     host_ip: str
     username: str
+    connection_type: str = "auto"
+    connection_label: str = "Auto-detect"
 
 
 class VmUpdate(BaseModel):

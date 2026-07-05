@@ -8,6 +8,7 @@ import time
 import esxi_handler
 import worker
 import storage_util
+import vsphere_context
 from config_env import DATA_DIR
 from models import Config, VM, ESXiHost, BackupLog, RestoreJob
 
@@ -183,31 +184,59 @@ def test_storage(db):
 
 
 def host_to_dict(host, include_secrets=False):
+    conn = getattr(host, "connection_type", None) or vsphere_context.CONN_AUTO
     data = {
         "id": host.id,
         "name": host.name,
         "host_ip": host.host_ip,
         "username": host.username,
+        "connection_type": conn,
+        "connection_label": vsphere_context.connection_label(
+            conn if conn != vsphere_context.CONN_AUTO else vsphere_context.CONN_STANDALONE
+        ) if conn != vsphere_context.CONN_AUTO else "Auto-detect",
     }
     if include_secrets:
         data["password"] = host.password
     return data
 
 
-def add_esxi_host(db, name, host_ip, username, password):
+def add_esxi_host(db, name, host_ip, username, password, connection_type="auto"):
+    from logger_util import log_info, log_warn
+    import vsphere_context
+
     existing = db.query(ESXiHost).filter(ESXiHost.name == name).first()
     if existing:
         raise ValueError(f"Host '{name}' already exists")
 
     si = esxi_handler.connect_esxi(host_ip, username, password)
     if not si:
-        raise ConnectionError(f"Could not connect to ESXi host at {host_ip}")
+        raise ConnectionError(f"Could not connect to host at {host_ip}")
+
+    detected = vsphere_context.detect_connection_type(si)
+    stored_type = connection_type or vsphere_context.CONN_AUTO
+    if stored_type == vsphere_context.CONN_AUTO:
+        stored_type = detected
+    elif stored_type != detected:
+        log_warn(
+            f"[HOST] connection_type={stored_type} differs from detected {detected}; "
+            f"using stored value for {name}"
+        )
+    log_info(
+        f"[HOST] Registered {name} ({host_ip}) as "
+        f"{vsphere_context.connection_label(stored_type)}"
+    )
     esxi_handler.Disconnect(si)
 
     from services.vddk_install import ensure_vddk_on_host_add
     vddk_status = ensure_vddk_on_host_add(db)
 
-    host = ESXiHost(name=name, host_ip=host_ip, username=username, password=password)
+    host = ESXiHost(
+        name=name,
+        host_ip=host_ip,
+        username=username,
+        password=password,
+        connection_type=stored_type,
+    )
     db.add(host)
     db.commit()
     db.refresh(host)

@@ -254,7 +254,10 @@ def create_host(
     user: User = Depends(require_api_role("admin")),
 ):
     try:
-        host = backup_ops.add_esxi_host(db, body.name, body.host_ip, body.username, body.password)
+        host = backup_ops.add_esxi_host(
+            db, body.name, body.host_ip, body.username, body.password,
+            connection_type=body.connection_type or "auto",
+        )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ConnectionError as e:

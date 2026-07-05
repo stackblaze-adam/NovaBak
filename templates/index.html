@@ -542,6 +542,13 @@
             if (tabParam && document.getElementById('tab-' + tabParam)) {
                 return 'tab-' + tabParam;
             }
+            if (params.get('profile_saved') || params.get('purge_started')) {
+                return 'tab-settings';
+            }
+            const stored = localStorage.getItem('activeTab');
+            if (stored && document.getElementById(stored)) {
+                return stored;
+            }
             return 'tab-overview';
         }
 
@@ -600,7 +607,8 @@
             closeNavMobileMenu();
         }
 
-        function switchTab(tabId) {
+        function switchTab(tabId, options) {
+            options = options || {};
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             const panel = document.getElementById(tabId);
             if (!panel) return;
@@ -612,7 +620,8 @@
                 loadGroupedBackups();
             }
             if (tabId === 'tab-settings' && typeof showSettingsPanel === 'function') {
-                showSettingsPanel(localStorage.getItem('settingsPanel') || 'profile');
+                const settingsPanel = options.settingsPanel || localStorage.getItem('settingsPanel') || 'profile';
+                showSettingsPanel(settingsPanel);
                 if (sessionStorage.getItem('novabak_open_wizard') === '1') {
                     sessionStorage.removeItem('novabak_open_wizard');
                     setTimeout(() => { if (typeof window.openSetupWizard === 'function') window.openSetupWizard(); }, 50);
@@ -620,6 +629,20 @@
             }
             if (tabId === 'tab-overview' && typeof refreshOverview === 'function') {
                 refreshOverview(false);
+            }
+        }
+
+        function showHostsPanelMessage(text, kind) {
+            const msg = document.getElementById('hosts-action-msg');
+            if (!msg) return;
+            msg.textContent = text;
+            msg.classList.remove('hidden');
+            if (kind === 'error') {
+                msg.style.background = 'rgba(239,68,68,0.12)';
+                msg.style.color = '#f87171';
+            } else {
+                msg.style.background = 'rgba(34,197,94,0.12)';
+                msg.style.color = '#4ade80';
             }
         }
 
@@ -1281,8 +1304,33 @@
         }
 
         window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const settingsPanel = params.get('panel');
             const activeTab = getInitialTabId();
-            if (document.getElementById(activeTab)) { switchTab(activeTab); }
+            const switchOpts = (activeTab === 'tab-settings' && settingsPanel)
+                ? { settingsPanel }
+                : undefined;
+            if (document.getElementById(activeTab)) { switchTab(activeTab, switchOpts); }
+
+            if (params.get('profile_saved')) {
+                switchTab('tab-settings', { settingsPanel: 'profile' });
+                document.getElementById('profile-saved-msg')?.classList.remove('hidden');
+            }
+            if (params.get('purge_started')) {
+                switchTab('tab-settings', { settingsPanel: 'maintenance' });
+                document.getElementById('purge-started-msg')?.classList.remove('hidden');
+            }
+            const hostErr = params.get('error');
+            if (hostErr && (settingsPanel === 'hosts' || activeTab === 'tab-settings')) {
+                switchTab('tab-settings', { settingsPanel: 'hosts' });
+                showHostsPanelMessage(hostErr, 'error');
+            } else if (activeTab === 'tab-settings' && settingsPanel === 'hosts' && !hostErr) {
+                showHostsPanelMessage('Host saved.', 'success');
+            }
+
+            if (params.get('tab') || params.get('panel') || params.get('error') || params.get('profile_saved') || params.get('purge_started')) {
+                window.history.replaceState({}, '', window.location.pathname);
+            }
             
             const savedTheme = localStorage.getItem('userTheme') || 'light';
             applyTheme(savedTheme);
@@ -1518,8 +1566,11 @@
 
         <!-- JOBS TAB -->
         <div id="tab-jobs" class="tab-content hidden">
-            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 space-y-4 md:space-y-0">
-                <h2 class="text-2xl font-bold">Backup Tasks</h2>
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 space-y-4 md:space-y-0 gap-4">
+                <div class="flex flex-wrap items-center gap-3">
+                    <h2 class="text-2xl font-bold">Backup Tasks</h2>
+                    <button type="button" id="jobsPauseToggle" onclick="toggleJobsPause()" class="btn-secondary px-3 py-1.5 text-xs font-semibold whitespace-nowrap">Pause all</button>
+                </div>
                 
                 <div class="flex space-x-4 w-full md:w-auto">
                     <div class="relative flex-grow md:w-64">
@@ -1539,7 +1590,6 @@
                         <button type="button" id="jobsViewList" onclick="setJobsView('list')" class="jobs-view-btn active rounded-none">List</button>
                         <button type="button" id="jobsViewCards" onclick="setJobsView('cards')" class="jobs-view-btn rounded-none border-l" style="border-color: var(--border-color)">Cards</button>
                     </div>
-                    <button type="button" id="jobsPauseToggle" onclick="toggleJobsPause()" class="btn-secondary px-3 py-2 text-xs font-semibold whitespace-nowrap">Pause all</button>
                 </div>
             </div>
 
@@ -1635,17 +1685,16 @@
                                         </form>
                                         <div class="relative job-actions-wrap" id="job-actions-wrap-{{ vm.id }}">
                                             <button type="button" onclick="toggleJobActionsMenu({{ vm.id }})" class="btn-secondary p-1.5 rounded" title="Schedule settings" aria-label="Schedule settings">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                             </button>
                                             <div id="job-actions-menu-{{ vm.id }}" class="job-actions-menu hidden">
                                                 <div class="job-actions-menu-header">Schedule</div>
                                                 {% include 'partials/job_schedule_form_popover.html' %}
-                                                <button type="button" onclick="removeVmFromTasks({{ vm.id }}, {{ vm.vm_name|tojson }})" class="w-full mt-2 btn-secondary px-3 py-1.5 text-xs font-medium hover:text-red-400 hover:border-red-400/50 flex items-center justify-center gap-1.5">
-                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                                    Remove from tasks
-                                                </button>
                                             </div>
                                         </div>
+                                        <button type="button" class="job-remove-btn btn-secondary p-1.5 rounded hover:text-red-400 hover:border-red-400/50" title="Remove from tasks" data-vm-id="{{ vm.id }}" data-vm-name="{{ vm.vm_name|e }}">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        </button>
                                     </div>
                                 </td>
                             </tr>
@@ -1690,7 +1739,7 @@
                                         Run Now
                                     </button>
                                 </form>
-                                <button type="button" onclick="removeVmFromTasks({{ vm.id }}, {{ vm.vm_name|tojson }})" class="btn-secondary p-1.5 rounded hover:text-red-400 hover:border-red-400/50" title="Remove from tasks">
+                                <button type="button" class="job-remove-btn btn-secondary p-1.5 rounded hover:text-red-400 hover:border-red-400/50" title="Remove from tasks" data-vm-id="{{ vm.id }}" data-vm-name="{{ vm.vm_name|e }}">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                 </button>
                             </div>
@@ -1781,7 +1830,7 @@
                     <select name="esxi_host_id" required class="py-2 px-3 text-sm rounded">
                         <option value="" disabled selected>Select Hypervisor...</option>
                         {% for host in esxi_hosts %}
-                        <option value="{{ host.id }}">{{ host.name }} ({{ host.host_ip }})</option>
+                        <option value="{{ host.id }}">{{ host.name }} ({{ host.host_ip }}){% if host.connection_type == 'vcenter' %} · vCenter{% elif host.connection_type == 'standalone' %} · ESXi{% endif %}</option>
                         {% endfor %}
                     </select>
                     <button type="submit" class="btn-primary px-4 py-2 text-sm font-medium">Scan</button>
@@ -2033,6 +2082,18 @@
             throw e;
         }
     }
+    window.removeVmFromTasks = removeVmFromTasks;
+
+    document.addEventListener('click', e => {
+        const removeBtn = e.target.closest('.job-remove-btn');
+        if (!removeBtn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const vmId = parseInt(removeBtn.dataset.vmId, 10);
+        const vmName = removeBtn.dataset.vmName || 'VM';
+        removeVmFromTasks(vmId, vmName);
+        if (typeof closeAllJobActionsMenus === 'function') closeAllJobActionsMenus();
+    });
 
     // ─── API Access Tokens (Settings) ─────────────────────────────────────────
     function formatApiKeyDate(iso) {
@@ -2589,26 +2650,11 @@
             }
         }
 
-        if (params.get('tab') || pwOk || pwErr || params.get('new_user') || params.get('reset_user') || params.get('user_ok') || params.get('user_error')) {
+        if (pwOk || pwErr || params.get('new_user') || params.get('reset_user') || params.get('user_ok') || params.get('user_error')) {
             window.history.replaceState({}, '', window.location.pathname);
         }
 
-        // Profile saved feedback
-        if (params.get('profile_saved')) {
-            switchTab('tab-settings');
-            if (typeof showSettingsPanel === 'function') showSettingsPanel('profile');
-            const msg = document.getElementById('profile-saved-msg');
-            if (msg) msg.classList.remove('hidden');
-            window.history.replaceState({}, '', window.location.pathname);
-        }
-
-        if (params.get('purge_started')) {
-            switchTab('tab-settings');
-            if (typeof showSettingsPanel === 'function') showSettingsPanel('maintenance');
-            const msg = document.getElementById('purge-started-msg');
-            if (msg) msg.classList.remove('hidden');
-            window.history.replaceState({}, '', window.location.pathname);
-        }
+        // profile_saved / purge_started / tab+panel handled on DOMContentLoaded
     })();
 
     // ─── Setup wizard ─────────────────────────────────────────────────────────
@@ -2843,6 +2889,14 @@
         }
     }
 
+    function wizardHostConnectionLabel(h) {
+        if (h.connection_label) return h.connection_label;
+        const t = h.connection_type || 'auto';
+        if (t === 'vcenter') return 'vCenter';
+        if (t === 'standalone') return 'Standalone ESXi';
+        return 'Auto-detect';
+    }
+
     function wizardRefreshHostList() {
         const ul = document.getElementById('wizard-host-list');
         if (!ul) return;
@@ -2855,6 +2909,7 @@
                 <div>
                     <span class="font-medium block">${escapeHtml(h.name)}</span>
                     <span class="text-xs font-mono" style="color:var(--brand)">${escapeHtml(h.host_ip)}</span>
+                    <span class="text-xs block mt-0.5" style="color:var(--text-muted)">${escapeHtml(wizardHostConnectionLabel(h))}</span>
                 </div>
                 <button type="button" onclick="wizardDeleteHost(${h.id})" class="text-gray-500 hover:text-red-400 transition-colors flex-shrink-0" title="Remove host">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
@@ -2884,12 +2939,13 @@
         const host_ip = document.getElementById('wizard-host-ip')?.value?.trim();
         const username = document.getElementById('wizard-host-user')?.value?.trim();
         const password = document.getElementById('wizard-host-pass')?.value || '';
+        const connection_type = document.getElementById('wizard-host-type')?.value || 'auto';
         if (!name || !host_ip || !username || !password) {
             wizardShowError('Fill in alias, host, username, and password.');
             return;
         }
         try {
-            const host = await wizardApi('POST', '/hosts', { name, host_ip, username, password });
+            const host = await wizardApi('POST', '/hosts', { name, host_ip, username, password, connection_type });
             if (!wizardState.hosts.some(h => h.id === host.id)) wizardState.hosts.push(host);
             wizardRefreshHostList();
             document.getElementById('wizard-host-pass').value = '';

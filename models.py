@@ -49,6 +49,8 @@ class ESXiHost(Base):
     host_ip = Column(String)
     username = Column(String)
     password = Column(String) # For production this should ideally be encrypted
+    # standalone | vcenter | auto (detect on connect)
+    connection_type = Column(String, default="auto")
     
     # Establish a relationship with VMs
     vms = relationship("VM", back_populates="esxi_host", cascade="all, delete-orphan")
@@ -211,6 +213,7 @@ def init_db():
             ("repo_min_free_gb", "ALTER TABLE config ADD COLUMN repo_min_free_gb INTEGER DEFAULT 50"),
             ("exclude_infra_vms", "ALTER TABLE config ADD COLUMN exclude_infra_vms BOOLEAN DEFAULT 1"),
             ("vddk_libdir", "ALTER TABLE config ADD COLUMN vddk_libdir VARCHAR DEFAULT '/opt/vmware-vix-disklib-distrib'"),
+            ("connection_type", "ALTER TABLE esxi_hosts ADD COLUMN connection_type VARCHAR DEFAULT 'auto'"),
         ]
         
         from logger_util import log_info, log_warn
