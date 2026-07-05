@@ -845,6 +845,9 @@
                 set('ov-legend-free', `${st.disk_free_gb} GB`);
                 set('ov-legend-used', `${otherUsedGb} GB`);
                 set('ov-legend-backup', st.total_human || '0 GB');
+                const showUsed = otherUsedGb > 0 && otherUsedPct > 0;
+                document.getElementById('ov-legend-used-wrap')?.classList.toggle('hidden', !showUsed);
+                document.getElementById('ov-legend-used-sep')?.classList.toggle('hidden', !showUsed);
             } else {
                 diskBlock?.classList.add('hidden');
             }
