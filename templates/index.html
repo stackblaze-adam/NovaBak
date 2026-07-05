@@ -1009,6 +1009,7 @@
             });
             localStorage.setItem('settingsPanel', panelId);
             if (panelId === 'api' && typeof loadApiKeys === 'function') loadApiKeys();
+            if (panelId === 'incremental' && typeof syncSettingsCbtUi === 'function') syncSettingsCbtUi();
         }
 
         function initSetupWizardTriggers() {
@@ -1461,6 +1462,7 @@
             initConfirmForms();
             initSetupWizardTriggers();
             updateSchedulerPauseUi();
+            if (typeof syncSettingsCbtUi === 'function') syncSettingsCbtUi();
 
             document.getElementById('appModalCancel')?.addEventListener('click', () => closeAppModal(false));
             document.getElementById('appModalConfirm')?.addEventListener('click', () => closeAppModal(true));
@@ -2334,6 +2336,31 @@
         document.querySelectorAll('.storage-fields').forEach(el => el.classList.add('hidden'));
         const target = document.getElementById('fields-' + type);
         if (target) target.classList.remove('hidden');
+        syncSettingsCbtUi();
+    }
+
+    function syncSettingsCbtUi() {
+        const storageType = document.querySelector('input[name="storage_type"]:checked')?.value || 'NFS';
+        const isS3 = storageType === 'S3';
+        const note = document.getElementById('settings-cbt-s3-note');
+        const cb = document.getElementById('settings-cbt-enabled');
+        if (note) note.classList.toggle('hidden', !isS3);
+        if (cb) {
+            cb.disabled = isS3;
+            if (isS3) cb.checked = false;
+        }
+    }
+
+    function syncWizardCbtUi() {
+        const type = document.querySelector('input[name="wizard_storage_type"]:checked')?.value || 'NFS';
+        const isS3 = type === 'S3';
+        const note = document.getElementById('wizard-cbt-s3-note');
+        const cb = document.getElementById('wizard-cbt-enabled');
+        if (note) note.classList.toggle('hidden', !isS3);
+        if (cb) {
+            cb.disabled = isS3;
+            if (isS3) cb.checked = false;
+        }
     }
     function buildSubsList() {
         // Collect checked event keys into the hidden comma-separated input
@@ -2877,7 +2904,10 @@
             nextBtn.classList.remove('hidden');
             nextBtn.textContent = step === 4 ? 'Apply & Finish' : (step === WIZARD_TOTAL_STEPS ? 'Go to Tasks' : 'Continue');
         }
-        if (step === 4) wizardShowDaysRow();
+        if (step === 4) {
+            wizardShowDaysRow();
+            syncWizardCbtUi();
+        }
     }
 
     function wizardGoToStep(n) {
@@ -2904,6 +2934,13 @@
             const existing = await wizardApi('GET', '/hosts');
             wizardState.hosts = existing;
         } catch (_) {}
+        try {
+            const cfg = await wizardApi('GET', '/config');
+            const cbtCb = document.getElementById('wizard-cbt-enabled');
+            const cbtIv = document.getElementById('wizard-cbt-interval');
+            if (cbtCb) cbtCb.checked = cfg.cbt_enabled !== false;
+            if (cbtIv) cbtIv.value = cfg.cbt_full_interval || 7;
+        } catch (_) {}
         wizardRefreshHostList();
         wizardInitStorageSelection();
         wizardShowDaysRow();
@@ -2924,6 +2961,7 @@
         document.querySelectorAll('.wizard-storage-fields').forEach(el => el.classList.add('hidden'));
         const target = document.getElementById('wizard-fields-' + type);
         if (target) target.classList.remove('hidden');
+        syncWizardCbtUi();
     }
 
     function wizardUpdateDaysHidden() {
@@ -3195,6 +3233,11 @@
         const hostHour = {};
         hostIds.forEach((hid, i) => { hostHour[hid] = (hour + (stagger ? i : 0)) % 24; });
 
+        const storageType = document.querySelector('input[name="wizard_storage_type"]:checked')?.value || 'NFS';
+        const cbtEnabled = storageType !== 'S3' && (document.getElementById('wizard-cbt-enabled')?.checked ?? true);
+        const cbtInterval = parseInt(document.getElementById('wizard-cbt-interval')?.value || '7', 10);
+        await wizardApi('PUT', '/config', { cbt_enabled: cbtEnabled, cbt_full_interval: cbtInterval });
+
         let updated = 0;
         for (const v of wizardState.vms) {
             const body = v._selected ? {
@@ -3206,6 +3249,7 @@
                 schedule_frequency: frequency,
                 schedule_days: scheduleDays,
                 power_off_for_backup: false,
+                cbt_enabled: cbtEnabled,
             } : { is_selected: false, is_job_active: false };
             await wizardApi('PATCH', `/vms/${v.id}`, body);
             if (v._selected) updated++;
@@ -3215,7 +3259,7 @@
         if (summary) {
             summary.innerHTML = `
                 <p><strong>${updated}</strong> VM(s) scheduled (${frequency})${jobActive ? '' : ' — inactive until enabled'}.</p>
-                <p class="mt-1 opacity-80">${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} UTC${stagger && hostIds.length > 1 ? ' · staggered by host' : ''} · Keep ${retention}</p>`;
+                <p class="mt-1 opacity-80">${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} UTC${stagger && hostIds.length > 1 ? ' · staggered by host' : ''} · Keep ${retention}${cbtEnabled ? ' · CBT incremental' : ' · Full backups only'}</p>`;
         }
         localStorage.setItem('setup_wizard_done', '1');
     }

@@ -251,6 +251,26 @@
                                     <span class="text-[10px] font-semibold leading-tight text-[var(--text-muted)]">Stagger by host (+1 hour per host)</span>
                                 </label>
                             </div>
+
+                            <div class="pt-4 mt-4 max-w-md" style="border-top: 1px solid var(--border-color)">
+                                <h4 class="text-sm font-semibold mb-1">Incremental backups (CBT)</h4>
+                                <p class="text-xs mb-3" style="color: var(--text-muted)">First backup is full; later runs store only changed blocks. Per-VM override available under Tasks.</p>
+                                <div class="space-y-3">
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="checkbox" id="wizard-cbt-enabled" checked class="rounded w-4 h-4">
+                                        <span class="text-sm font-medium">Enable incremental backups for selected VMs</span>
+                                    </label>
+                                    <div>
+                                        <span class="input-label text-[10px]">Full backup interval</span>
+                                        <input type="number" id="wizard-cbt-interval" value="7" min="1" max="60"
+                                               class="w-24 px-2 py-1 text-center font-mono text-sm mt-1">
+                                        <span class="text-[10px] opacity-60 ml-2">incrementals before synthetic full</span>
+                                    </div>
+                                </div>
+                                <p id="wizard-cbt-s3-note" class="hidden mt-3 text-xs px-3 py-2 rounded" style="background: rgba(234,179,8,0.12); color: #eab308;">
+                                    S3 storage selected in step 1 — incremental backups are unavailable; full backups only.
+                                </p>
+                            </div>
                         </div>
                     </div>
 
